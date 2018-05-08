@@ -1,0 +1,29 @@
+{
+	"groups": [
+		{
+			"id": 11,
+			"hostnames": {
+				"www.java.com": "dfefecff1f2e77bfef84ef74920e77c23c811dd70df0b3b281521814e85c00ee",
+				"get.adobe.com": "eed46a668b8def191a448f0a47f1fc29fcefbcf690d83853af086042451136d2"
+			}
+		},
+		{
+			"id": 200,
+			"hostnames": {
+				"windows update": "9be67c1687f3bd9e7238dd0fb9aeafedb8c02c3819b063d3a48174c3599629d4",
+				"microsoft update": "608caf292eb99a5019cf767256fcdf5bc5275bd207517660699f0b27a1b26094"
+			}
+		},
+		{
+			"id": 3,
+			"hostnames": {
+				"1": "513278a950a418d277c3aae1988296c9ec795de18d9ae77fe834b96c91056aff",
+				"2": "0926e022cd5e0d0cd3ee3e432bfb9ddcac8f22ce56a8cd78bad4f373cd8cb551",
+				"3": "1d068627654257f8cd5397b2baf371876326077ee053be8b01c495ed9e9dabed",
+				"4": "93b5d41acec3adcd7ab47ba3212a7ba9565caeec7264e5a0c844fb5337f5e8ac",
+				"5": "3df626689b07dee3b6d5db3a807ef7a4f54d5dad2007ac0767a169eb9865c65a",
+				"6": "07495307a3fa4a63216c56b9f402fb4a1c591f880c24f9bbcaf3c529fb70b0ce"
+			}
+		}
+	]
+}

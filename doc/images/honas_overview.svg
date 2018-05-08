@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/PR-SVG-20010719/DTD/svg10.dtd">
+<svg width="26cm" height="14cm" viewBox="219 239 502 262" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <defs/>
+  <g id="Background">
+    <ellipse style="fill: #cbddef; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" cx="290" cy="270" rx="70" ry="30"/>
+    <ellipse style="fill: #cbddef; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" cx="290" cy="470" rx="70" ry="30"/>
+    <ellipse style="fill: #cbddef; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" cx="470" cy="370" rx="70" ry="30"/>
+    <ellipse style="fill: #cbddef; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" cx="650" cy="470" rx="70" ry="30"/>
+    <rect style="fill: #d0d0d0; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" x="410" y="240" width="120" height="60" rx="0" ry="0"/>
+    <rect style="fill: #d0d0d0; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" x="410" y="440" width="120" height="60" rx="0" ry="0"/>
+    <g>
+      <line style="fill: none; stroke-opacity: 1; stroke-width: 2; stroke: #000000" x1="360.664" y1="270" x2="399.257" y2="270"/>
+      <polygon style="fill: #000000; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" fill-rule="evenodd" points="406.757,270 396.757,275 399.257,270 396.757,265 "/>
+    </g>
+    <g>
+      <line style="fill: none; stroke-opacity: 1; stroke-width: 2; stroke: #000000" x1="470" y1="300.981" x2="470" y2="329.282"/>
+      <polygon style="fill: #000000; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" fill-rule="evenodd" points="470,336.782 465,326.782 470,329.282 475,326.782 "/>
+    </g>
+    <g>
+      <line style="fill: none; stroke-opacity: 1; stroke-width: 2; stroke: #000000" x1="470" y1="400.981" x2="470" y2="429.282"/>
+      <polygon style="fill: #000000; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" fill-rule="evenodd" points="470,436.782 465,426.782 470,429.282 475,426.782 "/>
+    </g>
+    <g>
+      <line style="fill: none; stroke-opacity: 1; stroke-width: 2; stroke: #000000" x1="360.664" y1="470" x2="399.257" y2="470"/>
+      <polygon style="fill: #000000; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" fill-rule="evenodd" points="406.757,470 396.757,475 399.257,470 396.757,465 "/>
+    </g>
+    <g>
+      <line style="fill: none; stroke-opacity: 1; stroke-width: 2; stroke: #000000" x1="531.007" y1="470" x2="569.6" y2="470"/>
+      <polygon style="fill: #000000; fill-opacity: 1; stroke-opacity: 1; stroke-width: 2; stroke: #000000" fill-rule="evenodd" points="577.1,470 567.1,475 569.6,470 567.1,465 "/>
+    </g>
+    <text font-size="12.8" style="fill: #000000; fill-opacity: 1; stroke: none;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:700" x="290" y="274.425">
+      <tspan x="290" y="274.425">DNS logging</tspan>
+    </text>
+    <text font-size="12.8" style="fill: #000000; fill-opacity: 1; stroke: none;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:700" x="470" y="274.425">
+      <tspan x="470" y="274.425">honas-gather</tspan>
+    </text>
+    <text font-size="12.8" style="fill: #000000; fill-opacity: 1; stroke: none;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:700" x="470" y="374.425">
+      <tspan x="470" y="374.425">Honas state file</tspan>
+    </text>
+    <text font-size="12.8" style="fill: #000000; fill-opacity: 1; stroke: none;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:700" x="290" y="474.425">
+      <tspan x="290" y="474.425">Search job</tspan>
+    </text>
+    <text font-size="12.8" style="fill: #000000; fill-opacity: 1; stroke: none;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:700" x="650" y="474.425">
+      <tspan x="650" y="474.425">Search result</tspan>
+    </text>
+    <text font-size="12.8" style="fill: #000000; fill-opacity: 1; stroke: none;text-anchor:middle;font-family:sans-serif;font-style:normal;font-weight:700" x="470" y="474.425">
+      <tspan x="470" y="474.425">honas-search</tspan>
+    </text>
+  </g>
+</svg>

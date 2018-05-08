@@ -1,0 +1,2 @@
+option('default_honas_gather_config_path', type : 'string', value : '/etc/honas/gather.conf', description : 'Path where honas-gather will look for the configuration when none is supplied as a command line argument')
+option('use_asm', type : 'boolean', value : true, description : 'Use assembler optimizations when available')
