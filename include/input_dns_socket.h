@@ -25,8 +25,8 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef DNS_SOCKET_INPUT_H
-#define DNS_SOCKET_INPUT_H
+#ifndef DNS_DNSTAP_INPUT_H
+#define DNS_DNSTAP_INPUT_H
 
 #include "honas_input.h"
 
@@ -36,4 +36,4 @@
  */
 extern honas_input_t input_dns_socket;
 
-#endif // DNS_SOCKET_INPUT_H
+#endif // DNS_DNSTAP_INPUT_H

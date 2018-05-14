@@ -32,7 +32,8 @@ m_dep = compiler.find_library('m', required: false)
 yajl_dep = dependency('yajl', version: '>=2.1.0')
 check_dep = dependency('check', version: '>=0.9.10')
 openssl_dep = dependency('openssl', version: '>=1.0.1')
-
+libevent_dep = dependency('libevent', version: '>=2.1')
+fstrm_dep = dependency('libfstrm')
 
 #######################
 #  Honas executables  #
@@ -42,8 +43,8 @@ honas_src = ['src/honas_state.c', 'src/bloom.c', 'src/byte_slice.c', 'src/hyperl
 
 gather_src = honas_src + ['src/bin/honas_gather.c']
 gather_src += ['src/honas_gather_config.c', 'src/utils.c', 'src/config.c', 'src/read_file.c', 'src/inet.c', 'src/utils.c']
-gather_src += ['src/input_dns_relayd.c', 'src/delim_reader.c', 'src/inet.c', 'src/utils.c', 'src/input_dns_socket.c']
-executable('honas-gather', gather_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep])
+gather_src += ['src/inet.c', 'src/utils.c']
+executable('honas-gather', gather_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep, libevent_dep, fstrm_dep])
 
 search_src = honas_src + ['src/bin/honas_search.c']
 search_src += ['src/json_printer.c', 'src/utils.c']
@@ -74,14 +75,6 @@ test_combinations_src = test_main_src + ['tests/combinations.c', 'src/combinatio
 test_combinations_exe = executable('test_combinations', test_combinations_src, include_directories: inc, build_by_default: false, dependencies: [check_dep])
 test('combinations tests', test_combinations_exe)
 
-test_input_dns_relayd_src = test_main_src + ['tests/input_dns_relayd.c', 'src/delim_reader.c', 'src/inet.c', 'src/utils.c']
-test_input_dns_relayd_exe = executable('test_input_dns_relayd', test_input_dns_relayd_src, include_directories: inc, build_by_default: false, dependencies: [check_dep])
-test('input_dns_relayd tests', test_input_dns_relayd_exe)
-
-test_input_dns_socket_src = test_main_src + ['tests/input_dns_socket.c', 'src/delim_reader.c', 'src/inet.c', 'src/utils.c']
-test_input_dns_socket_exe = executable('test_input_dns_socket', test_input_dns_socket_src, include_directories: inc, build_by_default: false, dependencies: [check_dep])
-test('input_dns_socket tests', test_input_dns_socket_exe)
-
 test_hyperloglog_src = test_main_src + ['tests/hyperloglog.c', 'src/hyperloglog.c', 'src/byte_slice.c']
 test_hyperloglog_exe = executable('test_hyperloglog', test_hyperloglog_src, include_directories: inc, build_by_default: false, dependencies: [check_dep])
 test('hyperloglog tests', test_hyperloglog_exe, env: ['CK_DEFAULT_TIMEOUT=90'])
@@ -89,15 +82,6 @@ test('hyperloglog tests', test_hyperloglog_exe, env: ['CK_DEFAULT_TIMEOUT=90'])
 test_bloom_src = test_main_src + ['tests/bloom.c', 'src/bloom.c', 'src/byte_slice.c']
 test_bloom_exe = executable('test_bloom', test_bloom_src, include_directories: inc, build_by_default: false, dependencies: [check_dep])
 test('bloom tests', test_bloom_exe)
-
-
-##################
-#  Fuzz testing  #
-##################
-
-input_fuzz_src = ['fuzz/src/input_fuzz.c', 'src/input_dns_relayd.c', 'src/input_dns_socket.c', 'src/inet.c', 'src/utils.c', 'src/delim_reader.c', 'src/logging.c']
-input_fuzz_exe = executable('input_fuzz', input_fuzz_src, include_directories: inc, build_by_default: false)
-
 
 ##########################
 #  Static code analysis  #

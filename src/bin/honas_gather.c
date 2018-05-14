@@ -32,64 +32,721 @@
 #include "utils.h"
 
 #include "honas_gather_config.h"
-#include "honas_input.h"
 #include "honas_state.h"
-#include "input_dns_relayd.h"
-#include "input_dns_socket.h"
+
+#include <sys/un.h>
+
+// Requires libevent2 and libfstrm.
+#include <event2/buffer.h>
+#include <event2/bufferevent.h>
+#include <event2/event.h>
+#include <event2/listener.h>
+#include <fstrm.h>
+
+#define UNIX_SOCKET_PATH	"/var/spool/honas/honas.sock"
+#define CONTENT_TYPE		"protobuf:dnstap.Dnstap"
+#define CAPTURE_HIGH_WATERMARK	262144
 
 const char active_state_file_name[] = "active_state";
-
-// Configure new input modules here.
-static const honas_input_t* input_modules[] = { &input_dns_relayd, &input_dns_socket };
-#define input_modules_count (sizeof(input_modules) / sizeof(input_modules[0]))
-
-static void* input_module_states[input_modules_count];
+static honas_state_t current_active_state;
 static volatile bool shutdown_pending = false;
 static volatile bool check_current_state = true;
+static honas_gather_config_t config = { 0 };
+static int init_dirfd = 0;
+static char* config_file = DEFAULT_HONAS_GATHER_CONFIG_PATH;
 
-static void input_modules_init()
+// --------------------------------------------------------------------------------------------------------
+
+typedef enum
 {
-	for (size_t i = 0; i < input_modules_count; i++) {
-		log_msg(INFO, "Initializing input module '%s'", input_modules[i]->name);
-		input_module_states[i] = NULL;
-		log_passert(input_modules[i]->init(&input_module_states[i]) == 0, "Failed to initialize input modules '%s'", input_modules[i]->name);
+	CONN_STATE_READING_CONTROL_READY,
+	CONN_STATE_READING_CONTROL_START,
+	CONN_STATE_READING_DATA,
+	CONN_STATE_STOPPED,
+} conn_state;
+
+struct capture
+{
+        struct sockaddr_un              addr;
+        struct event_base*              ev_base;
+        struct evconnlistener*          ev_connlistener;
+        struct event*                   ev_sighup;
+	size_t				count_written;
+	size_t				bytes_written;
+};
+
+struct capture ctx;
+
+struct connection
+{
+        struct capture*			context;
+	conn_state			state;
+	size_t				count_read;
+	size_t				bytes_read;
+	size_t				len_buf;
+	size_t				len_frame_payload;
+	size_t				len_frame_total;
+        struct bufferevent*             bev;
+        struct evbuffer*                ev_input;
+        struct evbuffer*                ev_output;
+        struct fstrm_control*           control;
+	struct fstrm_reader*		reader;
+};
+
+// The query types we will save.
+static const uint16_t relevant_dns_types[] = {
+        1, /* A */
+        2, /* NS */
+        15, /* MX */
+        28, /* AAAA */
+};
+static const size_t relevant_dns_types_count = sizeof(relevant_dns_types) / sizeof(relevant_dns_types[0]);
+
+// --------------------------------------------------------------------------------------------------------
+
+// Verifies that the FrameStream data is actually DNStap data.
+static bool verify_content_type(struct fstrm_reader *r, const uint8_t *content_type, size_t len_content_type)
+{
+	fstrm_res res;
+	const struct fstrm_control *control = NULL;
+	size_t n_content_type = 0;
+	const uint8_t *r_content_type = NULL;
+	size_t len_r_content_type = 0;
+
+	res = fstrm_reader_get_control(r, FSTRM_CONTROL_START, &control);
+	if (res != fstrm_res_success)
+		return false;
+
+	res = fstrm_control_get_num_field_content_type(control, &n_content_type);
+	if (res != fstrm_res_success)
+		return false;
+	if (n_content_type > 0)
+	{
+		res = fstrm_control_get_field_content_type(control, 0,
+			&r_content_type, &len_r_content_type);
+		if (res != fstrm_res_success)
+			return false;
+
+		if (len_content_type != len_r_content_type)
+			return false;
+
+		if (memcmp(content_type, r_content_type, len_content_type) == 0)
+			return true;
 	}
+
+	return false;
 }
 
-static void input_module_activate(const char* input_name, const honas_input_t** input_module, void** input_state)
+// Initialized a newly accepted connection.
+static struct connection* conn_init(struct capture* pctx)
 {
-	/* Lookup selected input module */
-	for (size_t i = 0; i < input_modules_count; i++) {
-		if (strcmp(input_modules[i]->name, input_name) == 0) {
-			*input_module = input_modules[i];
-			*input_state = input_module_states[i];
-			break;
+        struct connection* conn = calloc(1, sizeof(struct connection));
+        conn->context = pctx;
+        conn->state = CONN_STATE_READING_CONTROL_READY;
+        conn->control = fstrm_control_init();
+        return conn;
+}
+
+// Destroys a connection object.
+static void conn_destroy(struct connection** conn)
+{
+        if (*conn != NULL)
+        {
+                fstrm_control_destroy(&(*conn)->control);
+                free(*conn);
+        }
+}
+
+// Closes an accepted connection.
+static void cb_close_conn(struct bufferevent* bev, short error, void *arg)
+{
+        struct connection* conn = (struct connection*)arg;
+
+        if (error & BEV_EVENT_ERROR)
+        {
+                log_msg(ERR, "Closed client connection with error: ", strerror(errno), errno);
+        }
+
+        // Print statistics.
+        log_msg(INFO, "Closing socket. Read %zd frames and %zd bytes).", conn->count_read, conn->bytes_read);
+
+        /*
+         * The BEV_OPT_CLOSE_ON_FREE flag is set on our bufferevent's, so the
+         * following call to bufferevent_free() will close the underlying
+         * socket transport.
+         */
+        bufferevent_free(bev);
+        conn_destroy(&conn);
+}
+
+// Is there a full frame available for reading?
+static bool can_read_full_frame(struct connection* conn)
+{
+	uint32_t tmp[2] = { 0 };
+
+	/*
+	 * This tracks the total number of bytes that must be removed from the
+	 * input buffer to read the entire frame. */
+	conn->len_frame_total = 0;
+
+	/* Check if the frame length field has fully arrived. */
+	if (conn->len_buf < sizeof(uint32_t))
+		return false;
+
+	/* Read the frame length field. */
+	evbuffer_copyout(conn->ev_input, &tmp[0], sizeof(uint32_t));
+	conn->len_frame_payload = ntohl(tmp[0]);
+
+	/* Account for the frame length field. */
+	conn->len_frame_total += sizeof(uint32_t);
+
+	/* Account for the length of the frame payload. */
+	conn->len_frame_total += conn->len_frame_payload;
+
+	/* Check if this is a control frame. */
+	if (conn->len_frame_payload == 0)
+	{
+		uint32_t len_control_frame = 0;
+
+		/*
+		 * Check if the control frame length field has fully arrived.
+		 * Note that the input buffer hasn't been drained, so we also
+		 * need to account for the initial frame length field. That is,
+		 * there must be at least 8 bytes available in the buffer.
+		 */
+		if (conn->len_buf < 2*sizeof(uint32_t))
+			return false;
+
+		/* Read the control frame length. */
+		evbuffer_copyout(conn->ev_input, &tmp[0], 2*sizeof(uint32_t));
+		len_control_frame = ntohl(tmp[1]);
+
+		/* Account for the length of the control frame length field. */
+		conn->len_frame_total += sizeof(uint32_t);
+
+		/* Enforce minimum and maximum control frame size. */
+		if (len_control_frame < sizeof(uint32_t) ||
+		    len_control_frame > FSTRM_CONTROL_FRAME_LENGTH_MAX)
+		{
+			cb_close_conn(conn->bev, 0, conn);
+			return false;
+		}
+
+		/* Account for the control frame length. */
+		conn->len_frame_total += len_control_frame;
+	}
+
+	/*
+	 * Check if the frame has fully arrived. 'len_buf' must have at least
+	 * the number of bytes needed in order to read the full frame, which is
+	 * exactly 'len_frame_total'.
+	 */
+	if (conn->len_buf < conn->len_frame_total)
+	{
+		log_msg(WARN, "Incomplete message (have %zd bytes, want %u)",  conn->len_buf, conn->len_frame_total);
+		return false;
+	}
+
+	/* Success. The entire frame can now be read from the buffer. */
+	return true;
+}
+
+// Processes a data frame in the DNStap payload.
+static void process_data_frame(struct connection* conn)
+{
+	/*
+	 * Peek at 'conn->len_frame_total' bytes of data from the evbuffer, and
+	 * write them to the output file.
+	 */
+
+	/* Determine how many iovec's we need to read. */
+	const int n_vecs = evbuffer_peek(conn->ev_input, conn->len_frame_total, NULL, NULL, 0);
+
+	/* Allocate space for the iovec's. */
+	struct evbuffer_iovec vecs[n_vecs];
+
+	/* Retrieve the iovec's. */
+	const int n = evbuffer_peek(conn->ev_input, conn->len_frame_total, NULL, vecs, n_vecs);
+	assert(n == n_vecs);
+
+	// Find out what the total frame size is.
+	size_t bytes_read = 0;
+	for (int i = 0; i < n_vecs; i++)
+	{
+		bytes_read += vecs[i].iov_len;
+	}
+
+	// Read out the frame data into a new buffer.
+	if (bytes_read > 0)
+	{
+		char* buf = (char*)calloc(1, bytes_read);
+		if (buf)
+		{
+			size_t total_read = 0;
+			for (int i = 0; i < n_vecs; i++)
+			{
+				const size_t len = vecs[i].iov_len;
+				memcpy(buf + total_read, vecs[i].iov_base, len);
+				total_read += len;
+			}
 		}
 	}
-	if (*input_module == NULL)
-		log_die("Unsupported input modules '%s' configured", input_name);
 
-	/* Finalize selected input module configuration */
-	if ((*input_module)->finalize_config != NULL)
-		(*input_module)->finalize_config(*input_state);
+	/* Check that exactly the right number of bytes were written. */
+	assert(bytes_read == conn->len_frame_total);
+
+	/* Delete the data frame from the input buffer. */
+	evbuffer_drain(conn->ev_input, conn->len_frame_total);
+
+	// Do something with the previously read frame...
+
+	/* Accounting. */
+	conn->count_read += 1;
+	conn->bytes_read += bytes_read;
+	conn->context->count_written += 1;
+	conn->context->bytes_written += bytes_read;
 }
 
+static bool match_content_type(struct connection* conn)
+{
+	fstrm_res res;
+
+	/* Match the "Content Type" against ours. */
+	res = fstrm_control_match_field_content_type(conn->control,
+		(const uint8_t *) CONTENT_TYPE, strlen(CONTENT_TYPE));
+	if (res != fstrm_res_success)
+	{
+		return false;
+	}
+
+	/* Success. */
+	return true;
+}
+
+// Loads the protobuf control frame from the stream.
+static bool load_control_frame(struct connection* conn)
+{
+	fstrm_res res;
+	uint8_t *control_frame = NULL;
+
+	/* Check if the frame is too big. */
+	if (conn->len_frame_total >= FSTRM_CONTROL_FRAME_LENGTH_MAX)
+	{
+		/* Malformed. */
+		return false;
+	}
+
+	/* Get a pointer to the full, linearized control frame. */
+	control_frame = evbuffer_pullup(conn->ev_input, conn->len_frame_total);
+	if (!control_frame)
+	{
+		/* Malformed. */
+		return false;
+	}
+	log_msg(INFO, "Reading control frame (%u bytes): ", conn->len_frame_total);
+
+	/* Decode the control frame. */
+	res = fstrm_control_decode(conn->control,
+				   control_frame,
+				   conn->len_frame_total,
+				   FSTRM_CONTROL_FLAG_WITH_HEADER);
+	if (res != fstrm_res_success)
+	{
+		/* Malformed. */
+		return false;
+	}
+
+	/* Drain the data read. */
+	evbuffer_drain(conn->ev_input, conn->len_frame_total);
+
+	/* Success. */
+	return true;
+}
+
+// Sends a control frame to the bufferevent.
+static bool send_frame(struct connection* conn, const void *data, size_t size)
+{
+	if (bufferevent_write(conn->bev, data, size) != 0)
+	{
+		log_msg(WARN, "Failed to write control frame!");
+		return false;
+	}
+
+	return true;
+}
+
+// Writes a control frame to the stream.
+static bool write_control_frame(struct connection* conn)
+{
+	fstrm_res res;
+	uint8_t control_frame[FSTRM_CONTROL_FRAME_LENGTH_MAX];
+	size_t len_control_frame = sizeof(control_frame);
+
+	/* Encode the control frame. */
+	res = fstrm_control_encode(conn->control,
+		control_frame, &len_control_frame,
+		FSTRM_CONTROL_FLAG_WITH_HEADER);
+	if (res != fstrm_res_success)
+		return false;
+
+	/* Send the control frame. */
+	fstrm_control_type type = 0;
+	(void)fstrm_control_get_type(conn->control, &type);
+	if (!send_frame(conn, control_frame, len_control_frame))
+		return false;
+
+	/* Success. */
+	return true;
+}
+
+static bool process_control_frame_ready(struct connection* conn)
+{
+	fstrm_res res;
+
+	const uint8_t *content_type = NULL;
+	size_t len_content_type = 0;
+	size_t n_content_type = 0;
+
+	/* Retrieve the number of "Content Type" fields. */
+	res = fstrm_control_get_num_field_content_type(conn->control, &n_content_type);
+	if (res != fstrm_res_success)
+		return false;
+
+	for (size_t i = 0; i < n_content_type; i++) {
+		res = fstrm_control_get_field_content_type(conn->control, i,
+							   &content_type,
+							   &len_content_type);
+		if (res != fstrm_res_success)
+			return false;
+	}
+
+	/* Match the "Content Type" against ours. */
+	if (!match_content_type(conn))
+		return false;
+
+	/* Setup the ACCEPT frame. */
+	fstrm_control_reset(conn->control);
+	res = fstrm_control_set_type(conn->control, FSTRM_CONTROL_ACCEPT);
+	if (res != fstrm_res_success)
+		return false;
+	res = fstrm_control_add_field_content_type(conn->control,
+		(const uint8_t *) CONTENT_TYPE, strlen(CONTENT_TYPE));
+	if (res != fstrm_res_success)
+		return false;
+
+	/* Send the ACCEPT frame. */
+	if (!write_control_frame(conn))
+		return false;
+
+	/* Success. */
+	conn->state = CONN_STATE_READING_CONTROL_START;
+	return true;
+}
+
+static bool process_control_frame_start(struct connection* conn)
+{
+	/* Match the "Content Type" against ours. */
+	if (!match_content_type(conn))
+		return false;
+
+	/* Success. */
+	conn->state = CONN_STATE_READING_DATA;
+	return true;
+}
+
+static bool process_control_frame_stop(struct connection* conn)
+{
+	fstrm_res res;
+
+	conn->state = CONN_STATE_STOPPED;
+
+	/* Setup the FINISH frame. */
+	fstrm_control_reset(conn->control);
+	res = fstrm_control_set_type(conn->control, FSTRM_CONTROL_FINISH);
+	if (res != fstrm_res_success)
+		return false;
+
+	/* Send the FINISH frame. */
+	if (!write_control_frame(conn))
+		return false;
+
+	/* Success, though we return false in order to shut down the connection. */
+	return false;
+}
+
+// Processes the control frame in the protobuf stream.
+static bool process_control_frame(struct connection* conn)
+{
+	fstrm_res res;
+	fstrm_control_type type;
+
+	/* Get the control frame type. */
+	res = fstrm_control_get_type(conn->control, &type);
+	if (res != fstrm_res_success)
+		return false;
+
+	switch (conn->state) {
+	case CONN_STATE_READING_CONTROL_READY: {
+		if (type != FSTRM_CONTROL_READY)
+			return false;
+		return process_control_frame_ready(conn);
+	}
+	case CONN_STATE_READING_CONTROL_START: {
+		if (type != FSTRM_CONTROL_START)
+			return false;
+		return process_control_frame_start(conn);
+	}
+	case CONN_STATE_READING_DATA: {
+		if (type != FSTRM_CONTROL_STOP)
+			return false;
+		return process_control_frame_stop(conn);
+	}
+	default:
+		return false;
+	}
+
+	/* Success. */
+	return true;
+}
+
+// Callback for reading from DNStap socket.
+static void cb_read(struct bufferevent *bev, void *arg)
+{
+	struct connection* conn = (struct connection*)arg;
+	conn->bev = bev;
+	conn->ev_input = bufferevent_get_input(conn->bev);
+	conn->ev_output = bufferevent_get_output(conn->bev);
+
+	for (;;)
+	{
+		/* Get the number of bytes available in the buffer. */
+		conn->len_buf = evbuffer_get_length(conn->ev_input);
+
+		/* Check if there is any data available in the buffer. */
+		if (conn->len_buf <= 0)
+			return;
+
+		/* Check if the full frame has arrived. */
+		if (!can_read_full_frame(conn))
+			return;
+
+		/* Process the frame. */
+		if (conn->len_frame_payload > 0)
+		{
+			/* This is a data frame. */
+			process_data_frame(conn);
+		}
+		else
+		{
+			/* This is a control frame. */
+			if (!load_control_frame(conn)) {
+				/* Malformed control frame, shut down the connection. */
+				cb_close_conn(conn->bev, 0, conn);
+				return;
+			}
+
+			if (!process_control_frame(conn)) {
+				/*
+				 * Invalid control state requested, or the
+				 * end-of-stream has been reached. Shut down
+				 * the connection.
+				 */
+				cb_close_conn(conn->bev, 0, conn);
+				return;
+			}
+		}
+	}
+}
+
+// Accepts connections from underlying libevent sockets.
+static void cb_accept_conn(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *sa, int socklen, void *arg)
+{
+        struct capture* ctx = (struct capture*)arg;
+
+        // Get the event base from the listener.
+        struct event_base *base = evconnlistener_get_base(listener);
+
+        // Set up a buffered event and context for the new connection.
+        struct bufferevent* bev = bufferevent_socket_new(base, fd, BEV_OPT_CLOSE_ON_FREE);
+        if (!bev)
+        {
+                log_msg(ERR, "Failed to accept connection on Unix socket!");
+                evutil_closesocket(fd);
+                return;
+        }
+
+        // Initialize the connection for the accepted socket.
+        struct connection* conn = conn_init(ctx);
+        bufferevent_setcb(bev, cb_read, NULL, cb_close_conn, (void*)conn);
+        bufferevent_setwatermark(bev, EV_READ, 0, CAPTURE_HIGH_WATERMARK);
+        bufferevent_enable(bev, EV_READ | EV_WRITE);
+
+        log_msg(INFO, "Accepted new connection on the Unix socket!");
+}
+
+// Handles errors from underlying libevent sockets.
+static void cb_accept_error(struct evconnlistener *listener, void *arg)
+{
+        const int err = EVUTIL_SOCKET_ERROR();
+        log_msg(ERR, "Failed to accept connection on socket: %s", evutil_socket_error_to_string(err));
+}
+
+// Initializes the DNStap input for Unbound.
+static bool init_dnstap_input()
+{
+        // If the Honas process was killed ungracefully, the socket file is still present.
+        if (access(UNIX_SOCKET_PATH, F_OK) != -1)
+        {
+                log_msg(INFO, "Unlinking existing socket file %s...", UNIX_SOCKET_PATH);
+                unlink(UNIX_SOCKET_PATH);
+        }
+
+        // Bind the socket to a file (see define on top of file for default). We already set
+        // the first byte of the 'sun_path' to zero with calloc.
+        ctx.addr.sun_family = AF_UNIX;
+        strncpy(ctx.addr.sun_path, UNIX_SOCKET_PATH, sizeof(ctx.addr.sun_path) - 1);
+
+        // Create the event base.
+        ctx.ev_base = event_base_new();
+        if (!ctx.ev_base)
+        {
+                return false;
+        }
+
+        // Create the event connection listener.
+        unsigned flags = 0;
+        flags |= LEV_OPT_CLOSE_ON_FREE; // Closes underlying sockets.
+        flags |= LEV_OPT_CLOSE_ON_EXEC; // Sets FD_CLOEXEC on underlying sockets.
+        flags |= LEV_OPT_REUSEABLE;      // Sets SO_REUSEADDR on listener.
+        ctx.ev_connlistener = evconnlistener_new_bind(ctx.ev_base, cb_accept_conn, (void*)&ctx, flags, -1,
+                (struct sockaddr*)&ctx.addr, sizeof(ctx.addr));
+        if (!ctx.ev_connlistener)
+        {
+                event_base_free(ctx.ev_base);
+                ctx.ev_base = NULL;
+                return false;
+        }
+
+        // Set the error handling callback.
+        evconnlistener_set_error_cb(ctx.ev_connlistener, cb_accept_error);
+
+	return true;
+}
+
+static void create_state(honas_gather_config_t* config, honas_state_t* state, uint64_t period_begin)
+{
+	uint64_t period_end = period_begin - (period_begin % config->period_length) + config->period_length;
+	int result = honas_state_create(
+		state,
+		config->number_of_filters,
+		config->number_of_bits_per_filter,
+		config->number_of_hashes,
+		config->number_of_filters_per_user,
+		config->flatten_threshold);
+	log_passert(result == 0, "Failed to create honas state");
+
+	state->header->period_begin = period_begin;
+	state->header->period_end = period_end;
+	assert(state->header->first_request == 0);
+	assert(state->header->last_request == 0);
+	assert(state->header->number_of_requests == 0);
+	assert(state->header->estimated_number_of_clients == 0);
+	assert(state->header->estimated_number_of_host_names == 0);
+
+	log_msg(INFO, "Created new honas state");
+}
+
+static void finalize_state(honas_state_t* state)
+{
+	char period_file_name[] = "XXXX-XX-XXTXX:XX:XX.hs";
+	time_t period_end_time = state->header->period_end;
+	struct tm period_end_ts;
+	strftime(period_file_name, sizeof(period_file_name), "%FT%T.hs", gmtime_r(&period_end_time, &period_end_ts));
+
+	honas_state_persist(state, period_file_name, false);
+	honas_state_destroy(state);
+
+	log_msg(NOTICE, "Saved honas state to '%s'", period_file_name);
+}
+
+// Parse an item in the configuration.
 static int parse_config_item(const char* filename, honas_gather_config_t* config, unsigned int lineno, char* keyword, char* value, unsigned int length)
 {
-	int parsed = honas_gather_config_parse_item(filename, config, lineno, keyword, value, length);
-	for (size_t i = 0; i < input_modules_count; i++) {
-		if (input_modules[i]->parse_config_item != NULL)
-			parsed |= input_modules[i]->parse_config_item(filename, input_module_states[i], lineno, keyword, value, length);
-	}
-	return parsed;
+	return honas_gather_config_parse_item(filename, config, lineno, keyword, value, length);
 }
 
+// Load the configuration file.
 static void load_gather_config(honas_gather_config_t* config, int dirfd, const char* config_file)
 {
 	log_passert(fchdir(dirfd) != -1, "Failed to change to initial working directory");
 	config_read(config_file, config, (parse_item_t*)parse_config_item);
 	log_passert(chdir(config->bloomfilter_path) != -1, "Failed to change to honas state directory '%s'", config->bloomfilter_path);
 }
+
+// The signal shutdown handler.
+static void shutdown_handler(int signum __attribute__((unused)))
+{
+	event_base_loopexit(ctx.ev_base, NULL);
+}
+
+// The signal reload/recheck handler.
+static void recheck_handler(int signum __attribute__((unused)))
+{
+	const uint64_t now = time(NULL);
+	const int64_t wait = current_active_state.header->period_end - now;
+	if (wait <= 0)
+	{
+		// Finalize current state, reload config and create new current state
+		finalize_state(&current_active_state);
+		load_gather_config(&config, init_dirfd, config_file);
+		create_state(&config, &current_active_state, now);
+		return;
+	}
+
+	// Schedule alarm to recheck some time in the future.
+	// We recheck at least once per minute to handle possible clock changes.
+	alarm(MIN(wait, 60U));
+}
+
+// Sets up signal handlers.
+static bool setup_signal_handlers()
+{
+	// Create a new signal handler for shutdown signals.
+	struct sigaction sa = { .sa_handler = shutdown_handler };
+
+	// Set the shutdown signal handlers.
+	if (sigemptyset(&sa.sa_mask) != 0)
+	{
+		return false;
+	}
+	if (sigaction(SIGTERM, &sa, NULL) != 0)
+	{
+		return false;
+	}
+	if (sigaction(SIGINT, &sa, NULL) != 0)
+	{
+		return false;
+	}
+	if (sigaction(SIGQUIT, &sa, NULL) != 0)
+	{
+		return false;
+	}
+
+	// Create a new signal handler for reload/recheck signals.
+	struct sigaction sa_rel = { .sa_handler = recheck_handler };
+	if (sigaction(SIGALRM, &sa_rel, NULL) != 0)
+	{
+		return false;
+	}
+	if (sigaction(SIGHUP, &sa_rel, NULL) != 0)
+	{
+		return false;
+	}
+
+	return true;
+}
+
+// --------------------------------------------------------------------------------------------------------
 
 static bool try_open_active_state(honas_state_t* state)
 {
@@ -119,58 +776,12 @@ static bool try_open_active_state(honas_state_t* state)
 	}
 }
 
-static void create_state(honas_gather_config_t* config, honas_state_t* state, uint64_t period_begin)
-{
-	uint64_t period_end = period_begin - (period_begin % config->period_length) + config->period_length;
-	int result = honas_state_create(
-		state,
-		config->number_of_filters,
-		config->number_of_bits_per_filter,
-		config->number_of_hashes,
-		config->number_of_filters_per_user,
-		config->flatten_threshold);
-	log_passert(result == 0, "Failed to create honas state");
-
-	state->header->period_begin = period_begin;
-	state->header->period_end = period_end;
-	assert(state->header->first_request == 0);
-	assert(state->header->last_request == 0);
-	assert(state->header->number_of_requests == 0);
-	assert(state->header->estimated_number_of_clients == 0);
-	assert(state->header->estimated_number_of_host_names == 0);
-
-	log_msg(INFO, "Created new honas state");
-}
-
 static void close_state(honas_state_t* state)
 {
 	honas_state_persist(state, active_state_file_name, true);
 	honas_state_destroy(state);
 
 	log_msg(NOTICE, "Saved honas state to '%s'", active_state_file_name);
-}
-
-static void finalize_state(honas_state_t* state)
-{
-	char period_file_name[] = "XXXX-XX-XXTXX:XX:XX.hs";
-	time_t period_end_time = state->header->period_end;
-	struct tm period_end_ts;
-	strftime(period_file_name, sizeof(period_file_name), "%FT%T.hs", gmtime_r(&period_end_time, &period_end_ts));
-
-	honas_state_persist(state, period_file_name, false);
-	honas_state_destroy(state);
-
-	log_msg(NOTICE, "Saved honas state to '%s'", period_file_name);
-}
-
-static void exit_signal_handler(int UNUSED(signal))
-{
-	shutdown_pending = true;
-}
-
-static void recheck_signal_handler(int UNUSED(signal))
-{
-	check_current_state = true;
 }
 
 #define set_signal_handler(signal, handler)            \
@@ -207,8 +818,6 @@ static const struct option long_options[] = {
 int main(int argc, char** argv)
 {
 	char* program_name = "honas-gather";
-	char* config_file = DEFAULT_HONAS_GATHER_CONFIG_PATH;
-	static honas_gather_config_t config = { 0 };
 	int daemonize = 0;
 	int syslogenabled = 0;
 
@@ -293,96 +902,91 @@ int main(int argc, char** argv)
 
 	log_msg(INFO, "%s (version %s)", program_name, VERSION);
 
-	/* Setup signal handlers */
-	set_signal_handler(SIGCHLD, SIG_IGN);
-	set_signal_handler(SIGALRM, recheck_signal_handler);
-	set_signal_handler(SIGHUP, recheck_signal_handler);
-	set_signal_handler(SIGINT, exit_signal_handler);
-	set_signal_handler(SIGTERM, exit_signal_handler);
-	set_signal_handler(SIGQUIT, exit_signal_handler);
-
 	/* Open current working directory for consistent relative config file loading */
-	int init_dirfd = open(".", O_PATH | O_DIRECTORY | O_CLOEXEC);
+	init_dirfd = open(".", O_PATH | O_DIRECTORY | O_CLOEXEC);
 	log_passert(init_dirfd != -1, "Failed to open initial working directory");
 
 	/* Initialize and read configuration */
 	honas_gather_config_init(&config);
-	input_modules_init();
 	load_gather_config(&config, init_dirfd, config_file);
 	honas_gather_config_finalize(&config);
 
-	/* Activate the configured input module*/
-	const honas_input_t* input_module = NULL;
-	void* input_state = NULL;
-	input_module_activate(config.input_name, &input_module, &input_state);
-
 	/* Open or create honas state for this period */
-	honas_state_t current_state = { 0 };
-	if (!try_open_active_state(&current_state)) {
-		create_state(&config, &current_state, time(NULL));
+	if (!try_open_active_state(&current_active_state)) {
+		create_state(&config, &current_active_state, time(NULL));
 	}
 
-	/* Main processing loop */
-	log_msg(NOTICE, "Begin processing");
-	while (!shutdown_pending) {
-		if (check_current_state) {
-			uint64_t now = time(NULL);
-			int64_t wait = current_state.header->period_end - now;
-			if (wait <= 0) {
-				/* Finalize current state, reload config and create new current state */
-				finalize_state(&current_state);
-				load_gather_config(&config, init_dirfd, config_file);
-				create_state(&config, &current_state, now);
-				continue;
-			}
-
-			/* Schedule alarm to recheck some time in the future.
-			 * We recheck at least once per minute to handle possible clock changes.
-			 */
-			alarm(MIN(wait, 60U));
-			check_current_state = false;
-		}
-
-		/* Process dns requests */
-		struct in_addr46 client = { 0 };
-		uint8_t* host_name = NULL;
-		ssize_t result = input_module->next(input_state, &client, &host_name);
-		switch (result) {
-		case -1:
-			if (errno == EAGAIN || errno == EINTR) {
-				/* Input module encountered an EAGAIN or EINTR error (possibly due to SIGALRM)
-				 *	Continue running main loop normally.. */
-			} else {
-				log_perror(ERR, "Unexpected error reading input");
-				shutdown_pending = true;
-			}
-			break;
-
-		case 0:
-			/* End of input reached; Shutdown cleanly.. */
-			//shutdown_pending = true;
-
-			// Nothing useful was received by the input plugin this round, but that doesn't matter...
-			break;
-
-		default:
-			log_msg(DEBUG, "Processing host name lookup for '%s' from client '%s'", host_name, str_in_addr(&client));
-			honas_state_register_host_name_lookup(&current_state, time(NULL), &client, host_name, result);
-		}
+	// Initialize the DNStap input feature.
+	if (!init_dnstap_input())
+	{
+		log_msg(ERR, "Failed to initialize DNStap input!");
+		return 1;
 	}
+	else
+	{
+		log_msg(INFO, "Initialized DNStap input!");
+	}
+
+	/* Setup signal handlers */
+	if (!setup_signal_handlers())
+	{
+		log_msg(ERR, "Failed to install signal handlers!");
+		return 1;
+	}
+
+	// Run the main processing loop (listen for events on DNStap).
+	log_msg(INFO, "Starting main processing loop...");
+	if (event_base_dispatch(ctx.ev_base) != 0)
+	{
+		log_msg(ERR, "The main processing loop failed to start!");
+		return 1;
+	}
+
+	// Finalize application.
 	log_msg(NOTICE, "Done processing");
 
+	// Clean up libevent resources.
+	if (ctx.ev_sighup != NULL)
+	{
+		event_free(ctx.ev_sighup);
+	}
+	if (ctx.ev_connlistener != NULL)
+	{
+		evconnlistener_free(ctx.ev_connlistener);
+	}
+	if (ctx.ev_base != NULL)
+	{
+		event_base_free(ctx.ev_base);
+	}
+
 	/* Clean shutdown; persist active current state */
-	close_state(&current_state);
+	close_state(&current_active_state);
 
 	/* Destroy previously initialized data */
-	for (size_t i = 0; i < input_modules_count; i++) {
-		input_modules[i]->destroy(input_module_states[i]);
-		input_module_states[i] = NULL;
-	}
 	honas_gather_config_destroy(&config);
 
 	log_msg(NOTICE, "Exiting");
 	log_destroy();
 	return 0;
+
+
+
+
+
+
+
+	/* Main processing loop */
+	/*log_msg(NOTICE, "Begin processing");
+	while (!shutdown_pending) {
+
+		// Process dns requests
+		struct in_addr46 client = { 0 };
+		uint8_t* host_name = NULL;
+		ssize_t result = input_module->next(input_state, &client, &host_name);
+		switch (result) {
+		default:
+			log_msg(DEBUG, "Processing host name lookup for '%s' from client '%s'", host_name, str_in_addr(&client));
+			honas_state_register_host_name_lookup(&current_state, time(NULL), &client, host_name, result);
+		}
+	}*/
 }

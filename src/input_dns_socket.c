@@ -33,7 +33,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
-#define UNIX_SOCKET_PATH "/var/run/honas/honas.sock"
+#define UNIX_SOCKET_PATH "/var/spool/honas/honas.sock"
 #define UNIX_SOCKET_MAX_BACKLOG 25
 
 // The DNS query data structure that is passed via the Unix socket.
@@ -149,6 +149,10 @@ static int input_dns_socket_init(input_dns_socket_t** state_ptr)
 	{
 		log_perror(ERR, "Failed to bind Unix socket!");
 		goto err_out;
+	}
+	else
+	{
+		log_msg(INFO, "Succesfully bound Unix socket to %s!", UNIX_SOCKET_PATH);
 	}
 
 	// Create a read buffer for input data.
