@@ -36,18 +36,22 @@
 
 #include <sys/un.h>
 
-// Requires libevent2 and libfstrm.
+// Requires libevent2, libfstrm and ldns.
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
 #include <event2/event.h>
 #include <event2/listener.h>
 #include <fstrm.h>
+#include <ldns/ldns.h>
+
+// Include protobuf compiled header.
+#include <dnstap.pb-c.h>
 
 #define UNIX_SOCKET_PATH	"/var/spool/honas/honas.sock"
 #define CONTENT_TYPE		"protobuf:dnstap.Dnstap"
 #define CAPTURE_HIGH_WATERMARK	262144
 
-const char active_state_file_name[] = "active_state";
+static const char active_state_file_name[] = "active_state";
 static honas_state_t current_active_state;
 static volatile bool shutdown_pending = false;
 static volatile bool check_current_state = true;
@@ -90,36 +94,51 @@ struct connection
         struct evbuffer*                ev_input;
         struct evbuffer*                ev_output;
         struct fstrm_control*           control;
+	struct fstrm_reader_options*	reader_options;
+	struct fstrm_rdwr*		rdwr;
 	struct fstrm_reader*		reader;
 };
 
 // The query types we will save.
 static const uint16_t relevant_dns_types[] = {
-        1, /* A */
-        2, /* NS */
-        15, /* MX */
-        28, /* AAAA */
+        LDNS_RR_TYPE_A, /* A */
+        LDNS_RR_TYPE_NS, /* NS */
+        LDNS_RR_TYPE_MX, /* MX */
+        LDNS_RR_TYPE_AAAA, /* AAAA */
 };
 static const size_t relevant_dns_types_count = sizeof(relevant_dns_types) / sizeof(relevant_dns_types[0]);
+
+// Checks whether we are dealing with a relevant DNS query.
+static bool query_is_valid_dns_type(const ldns_rr_type qtype)
+{
+	for (int i = 0; i < relevant_dns_types_count; ++i)
+	{
+		if (qtype == relevant_dns_types[i])
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
 
 // --------------------------------------------------------------------------------------------------------
 
 // Verifies that the FrameStream data is actually DNStap data.
-static bool verify_content_type(struct fstrm_reader *r, const uint8_t *content_type, size_t len_content_type)
+static bool verify_content_type(struct fstrm_control* control, const uint8_t* content_type, const size_t len_content_type)
 {
 	fstrm_res res;
-	const struct fstrm_control *control = NULL;
 	size_t n_content_type = 0;
 	const uint8_t *r_content_type = NULL;
 	size_t len_r_content_type = 0;
 
-	res = fstrm_reader_get_control(r, FSTRM_CONTROL_START, &control);
-	if (res != fstrm_res_success)
-		return false;
-
+	// Check the content type.
 	res = fstrm_control_get_num_field_content_type(control, &n_content_type);
 	if (res != fstrm_res_success)
+	{
 		return false;
+	}
+
 	if (n_content_type > 0)
 	{
 		res = fstrm_control_get_field_content_type(control, 0,
@@ -140,11 +159,12 @@ static bool verify_content_type(struct fstrm_reader *r, const uint8_t *content_t
 // Initialized a newly accepted connection.
 static struct connection* conn_init(struct capture* pctx)
 {
+	// Initialize connection properties.
         struct connection* conn = calloc(1, sizeof(struct connection));
         conn->context = pctx;
         conn->state = CONN_STATE_READING_CONTROL_READY;
         conn->control = fstrm_control_init();
-        return conn;
+	return conn;
 }
 
 // Destroys a connection object.
@@ -251,6 +271,93 @@ static bool can_read_full_frame(struct connection* conn)
 	return true;
 }
 
+// Processes a DNStap message, and gives output to the Bloom filters.
+static bool decode_dnstap_message(const Dnstap__Message* m)
+{
+	bool is_query = false;
+	bool return_val = false;
+
+	// Determine whether we are dealing with a DNS query.
+	switch (m->type)
+	{
+		case DNSTAP__MESSAGE__TYPE__AUTH_QUERY:
+		case DNSTAP__MESSAGE__TYPE__RESOLVER_QUERY:
+		case DNSTAP__MESSAGE__TYPE__CLIENT_QUERY:
+		case DNSTAP__MESSAGE__TYPE__FORWARDER_QUERY:
+		case DNSTAP__MESSAGE__TYPE__STUB_QUERY:
+		case DNSTAP__MESSAGE__TYPE__TOOL_QUERY:
+			is_query = true;
+			break;
+		case DNSTAP__MESSAGE__TYPE__AUTH_RESPONSE:
+		case DNSTAP__MESSAGE__TYPE__RESOLVER_RESPONSE:
+		case DNSTAP__MESSAGE__TYPE__CLIENT_RESPONSE:
+		case DNSTAP__MESSAGE__TYPE__FORWARDER_RESPONSE:
+		case DNSTAP__MESSAGE__TYPE__STUB_RESPONSE:
+		case DNSTAP__MESSAGE__TYPE__TOOL_RESPONSE:
+			is_query = false;
+			break;
+		default:
+			return return_val;
+	}
+
+	// We only want to process queries that have questions.
+	if (is_query && m->has_query_message)
+	{
+		const ProtobufCBinaryData* message = &m->query_message;
+		ldns_pkt* pkt = NULL;
+		ldns_status status = ldns_wire2pkt(&pkt, message->data, message->len);
+		if (status == LDNS_STATUS_OK)
+		{
+			// Retrieve the source IP-address of the query.
+			struct in_addr46 client = { 0 };
+			if (m->has_query_address)
+			{
+				if (m->query_address.len == 4)
+				{
+					// Store the IPv4 source address.
+					client.af = AF_INET;
+					memcpy(&client.in.addr4, m->query_address.data, sizeof(client.in.addr4));
+				}
+				else if (m->query_address.len == 16)
+				{
+					// Store the IPv6 source address.
+					client.af = AF_INET6;
+					memcpy(&client.in.addr6, m->query_address.data, sizeof(client.in.addr6));
+				}
+			}
+
+			// Retrieve the resource record for the question.
+			const ldns_rr* rr = ldns_rr_list_rr(ldns_pkt_question(pkt), 0);
+			if (rr)
+			{
+				const ldns_rdf* qname = ldns_rr_owner(rr);
+				const ldns_rr_class qclass = ldns_rr_get_class(rr);
+				const ldns_rr_type qtype = ldns_rr_get_type(rr);
+
+				// Does the question contain a domain name? Furthermore, we only process IN class queries.
+				// Also, only queries for the A, NS, MX, AAAA record types are accepted.
+				if (qname && qclass == LDNS_RR_CLASS_IN && query_is_valid_dns_type(qtype))
+				{
+					// Store the DNS query in the Bloom filters.
+					char* hostname = ldns_rdf2str(qname);
+					const size_t hostname_length = strlen(hostname);
+					log_msg(INFO, "Client %s Query: %s, %s for '%s'", str_in_addr(&client), ldns_rr_class2str(qclass), ldns_rr_type2str(qtype), hostname);
+					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length);
+
+					// Free the hostname string and set the return value.
+					free(hostname);
+					return_val = true;
+				}
+			}
+		}
+
+		// Free the LDNS resources.
+		ldns_pkt_free(pkt);
+	}
+
+	return return_val;
+}
+
 // Processes a data frame in the DNStap payload.
 static void process_data_frame(struct connection* conn)
 {
@@ -277,18 +384,15 @@ static void process_data_frame(struct connection* conn)
 	}
 
 	// Read out the frame data into a new buffer.
-	if (bytes_read > 0)
+	uint8_t* buf = (uint8_t*)malloc(bytes_read);
+	if (buf)
 	{
-		char* buf = (char*)calloc(1, bytes_read);
-		if (buf)
+		size_t total_read = 0;
+		for (int i = 0; i < n_vecs; i++)
 		{
-			size_t total_read = 0;
-			for (int i = 0; i < n_vecs; i++)
-			{
-				const size_t len = vecs[i].iov_len;
-				memcpy(buf + total_read, vecs[i].iov_base, len);
-				total_read += len;
-			}
+			const size_t len = vecs[i].iov_len;
+			memcpy(buf + total_read, vecs[i].iov_base, len);
+			total_read += len;
 		}
 	}
 
@@ -298,7 +402,34 @@ static void process_data_frame(struct connection* conn)
 	/* Delete the data frame from the input buffer. */
 	evbuffer_drain(conn->ev_input, conn->len_frame_total);
 
-	// Do something with the previously read frame...
+	// Check whether the data frame actually has the correct content type.
+	if (verify_content_type(conn->control, (const uint8_t*)CONTENT_TYPE, strlen(CONTENT_TYPE)))
+	{
+		log_msg(INFO, "Processing data frame of %zu bytes in size...", bytes_read);
+	}
+	else
+	{
+		log_msg(ERR, "Failed to process data frame: invalid content type!");
+	}
+
+	// Decode the frame as DNStap.
+	Dnstap__Dnstap *d = dnstap__dnstap__unpack(NULL, bytes_read, buf);
+	if (!d)
+	{
+		log_msg(ERR, "Failed to unpack the frame into DNStap data!");
+	}
+
+	// Try to decode the DNStap message.
+	if (!decode_dnstap_message(d->message))
+	{
+		log_msg(ERR, "Failed to decode the DNStap message!");
+	}
+
+	// Clean up protobuf allocated structures.
+	if (d)
+	{
+		dnstap__dnstap__free_unpacked(d, NULL);
+	}
 
 	/* Accounting. */
 	conn->count_read += 1;
@@ -343,7 +474,7 @@ static bool load_control_frame(struct connection* conn)
 		/* Malformed. */
 		return false;
 	}
-	log_msg(INFO, "Reading control frame (%u bytes): ", conn->len_frame_total);
+	log_msg(INFO, "Reading FrameStream control frame (%u bytes).", conn->len_frame_total);
 
 	/* Decode the control frame. */
 	res = fstrm_control_decode(conn->control,
@@ -368,7 +499,7 @@ static bool send_frame(struct connection* conn, const void *data, size_t size)
 {
 	if (bufferevent_write(conn->bev, data, size) != 0)
 	{
-		log_msg(WARN, "Failed to write control frame!");
+		log_msg(WARN, "Failed to write FrameStream control frame!");
 		return false;
 	}
 
@@ -577,11 +708,18 @@ static void cb_accept_conn(struct evconnlistener *listener, evutil_socket_t fd, 
 
         // Initialize the connection for the accepted socket.
         struct connection* conn = conn_init(ctx);
-        bufferevent_setcb(bev, cb_read, NULL, cb_close_conn, (void*)conn);
-        bufferevent_setwatermark(bev, EV_READ, 0, CAPTURE_HIGH_WATERMARK);
-        bufferevent_enable(bev, EV_READ | EV_WRITE);
+	if (conn)
+	{
+	        bufferevent_setcb(bev, cb_read, NULL, cb_close_conn, (void*)conn);
+        	bufferevent_setwatermark(bev, EV_READ, 0, CAPTURE_HIGH_WATERMARK);
+	        bufferevent_enable(bev, EV_READ | EV_WRITE);
 
-        log_msg(INFO, "Accepted new connection on the Unix socket!");
+	        log_msg(INFO, "Accepted new connection on the Unix socket!");
+	}
+	else
+	{
+		log_msg(ERR, "Failed to initialize the connection!");
+	}
 }
 
 // Handles errors from underlying libevent sockets.
@@ -945,6 +1083,10 @@ int main(int argc, char** argv)
 	// Finalize application.
 	log_msg(NOTICE, "Done processing");
 
+	// Unlink socket file.
+	log_msg(INFO, "Unlinking socket file %s...", UNIX_SOCKET_PATH);
+	unlink(UNIX_SOCKET_PATH);
+
 	// Clean up libevent resources.
 	if (ctx.ev_sighup != NULL)
 	{
@@ -968,25 +1110,4 @@ int main(int argc, char** argv)
 	log_msg(NOTICE, "Exiting");
 	log_destroy();
 	return 0;
-
-
-
-
-
-
-
-	/* Main processing loop */
-	/*log_msg(NOTICE, "Begin processing");
-	while (!shutdown_pending) {
-
-		// Process dns requests
-		struct in_addr46 client = { 0 };
-		uint8_t* host_name = NULL;
-		ssize_t result = input_module->next(input_state, &client, &host_name);
-		switch (result) {
-		default:
-			log_msg(DEBUG, "Processing host name lookup for '%s' from client '%s'", host_name, str_in_addr(&client));
-			honas_state_register_host_name_lookup(&current_state, time(NULL), &client, host_name, result);
-		}
-	}*/
 }

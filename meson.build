@@ -7,7 +7,7 @@ project('honas', 'c', default_options: ['c_std=c99'])
 add_global_arguments('-D_GNU_SOURCE', language : 'c')
 compiler = meson.get_compiler('c')
 
-inc = include_directories(['include', '.'])
+inc = include_directories(['include', 'src/dnstap.pb', '.'])
 
 conf_data = configuration_data()
 conf_data.set_quoted('VERSION', '1.0.0')
@@ -32,8 +32,10 @@ m_dep = compiler.find_library('m', required: false)
 yajl_dep = dependency('yajl', version: '>=2.1.0')
 check_dep = dependency('check', version: '>=0.9.10')
 openssl_dep = dependency('openssl', version: '>=1.0.1')
-libevent_dep = dependency('libevent', version: '>=2.1')
+libevent_dep = dependency('libevent', version: '>=2.0')
 fstrm_dep = dependency('libfstrm')
+protobuf_dep = dependency('libprotobuf-c')
+ldns_dep = dependency('libldns')
 
 #######################
 #  Honas executables  #
@@ -43,8 +45,8 @@ honas_src = ['src/honas_state.c', 'src/bloom.c', 'src/byte_slice.c', 'src/hyperl
 
 gather_src = honas_src + ['src/bin/honas_gather.c']
 gather_src += ['src/honas_gather_config.c', 'src/utils.c', 'src/config.c', 'src/read_file.c', 'src/inet.c', 'src/utils.c']
-gather_src += ['src/inet.c', 'src/utils.c']
-executable('honas-gather', gather_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep, libevent_dep, fstrm_dep])
+gather_src += ['src/inet.c', 'src/utils.c', 'src/dnstap.pb/dnstap.pb-c.c']
+executable('honas-gather', gather_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep, libevent_dep, fstrm_dep, protobuf_dep, ldns_dep])
 
 search_src = honas_src + ['src/bin/honas_search.c']
 search_src += ['src/json_printer.c', 'src/utils.c']
