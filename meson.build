@@ -45,7 +45,7 @@ honas_src = ['src/honas_state.c', 'src/bloom.c', 'src/byte_slice.c', 'src/hyperl
 
 gather_src = honas_src + ['src/bin/honas_gather.c']
 gather_src += ['src/honas_gather_config.c', 'src/utils.c', 'src/config.c', 'src/read_file.c', 'src/inet.c', 'src/utils.c']
-gather_src += ['src/inet.c', 'src/utils.c', 'src/dnstap.pb/dnstap.pb-c.c']
+gather_src += ['src/inet.c', 'src/utils.c', 'src/dnstap.pb/dnstap.pb-c.c', 'src/instrumentation.c']
 executable('honas-gather', gather_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep, libevent_dep, fstrm_dep, protobuf_dep, ldns_dep])
 
 search_src = honas_src + ['src/bin/honas_search.c']

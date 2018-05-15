@@ -33,6 +33,7 @@
 
 #include "honas_gather_config.h"
 #include "honas_state.h"
+#include "instrumentation.h"
 
 #include <sys/un.h>
 
@@ -50,6 +51,7 @@
 #define UNIX_SOCKET_PATH	"/var/spool/honas/honas.sock"
 #define CONTENT_TYPE		"protobuf:dnstap.Dnstap"
 #define CAPTURE_HIGH_WATERMARK	262144
+#define HONAS_INSTRUMENTATION	"/var/spool/honas/instrumentation.log"
 
 static const char active_state_file_name[] = "active_state";
 static honas_state_t current_active_state;
@@ -58,6 +60,10 @@ static volatile bool check_current_state = true;
 static honas_gather_config_t config = { 0 };
 static int init_dirfd = 0;
 static char* config_file = DEFAULT_HONAS_GATHER_CONFIG_PATH;
+static FILE* inst_fd = NULL;
+
+// Structure keeping track of the instrumentation information.
+struct instrumentation inst_data;
 
 // --------------------------------------------------------------------------------------------------------
 
@@ -141,8 +147,7 @@ static bool verify_content_type(struct fstrm_control* control, const uint8_t* co
 
 	if (n_content_type > 0)
 	{
-		res = fstrm_control_get_field_content_type(control, 0,
-			&r_content_type, &len_r_content_type);
+		res = fstrm_control_get_field_content_type(control, 0, &r_content_type, &len_r_content_type);
 		if (res != fstrm_res_success)
 			return false;
 
@@ -344,6 +349,9 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					log_msg(INFO, "Client %s Query: %s, %s for '%s'", str_in_addr(&client), ldns_rr_class2str(qclass), ldns_rr_type2str(qtype), hostname);
 					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length);
 
+					// Update the instrumentation elements.
+					instrumentation_increment_accepted(&inst_data);
+
 					// Free the hostname string and set the return value.
 					free(hostname);
 					return_val = true;
@@ -354,7 +362,13 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 		// Free the LDNS resources.
 		ldns_pkt_free(pkt);
 	}
+	else
+	{
+		// Update instrumentation elements.
+		instrumentation_increment_skipped(&inst_data);
+	}
 
+	instrumentation_increment_processed(&inst_data);
 	return return_val;
 }
 
@@ -932,7 +946,7 @@ static void close_state(honas_state_t* state)
 		}                                              \
 	} while (0)
 
-static void show_usage(char* program_name, FILE* out)
+static void show_usage(const char* program_name, FILE* out)
 {
 	fprintf(out, "Usage: %s [--help] [--config <file>]\n\n", program_name);
 	fprintf(out, "  -h|--help           Show this message\n");
@@ -953,9 +967,58 @@ static const struct option long_options[] = {
 	{ 0, 0, 0, 0 }
 };
 
+// Finalizes and cleans the Honas instrumentation.
+static void finalize_instrumentation()
+{
+	if (inst_fd)
+	{
+		fclose(inst_fd);
+	}
+}
+
+// The instrumentation timer function, executed every minute.
+static void instrumentation_event(evutil_socket_t fd, short what, void *arg)
+{
+	struct instrumentation* inst_arg = (struct instrumentation*)arg;
+
+	// Dump the instrumentation data to the logfile.
+	char dumped[1024];
+	instrumentation_dump(inst_arg, dumped, sizeof(dumped));
+	fputs(dumped, inst_fd);
+
+	// Reset the instrumentation data.
+	instrumentation_reset(inst_arg);
+
+	// Some informative logging.
+	log_msg(INFO, dumped);
+}
+
+// Initializes the Honas instrumentation, writing to a separate logfile.
+static void init_instrumentation(struct event_base* base)
+{
+	// Open the instrumentation logfile.
+	inst_fd = fopen(HONAS_INSTRUMENTATION, "wb");
+	if (inst_fd)
+	{
+		log_msg(INFO, "Opened %s for instrumentation information output.", HONAS_INSTRUMENTATION);
+
+		// Initialize instrumentation data structure.
+		instrumentation_reset(&inst_data);
+
+		// Set the instrumentation timer.
+		struct timeval minutely = { 60, 0 };
+		struct event* ev = event_new(base, -1, EV_PERSIST, instrumentation_event, &inst_data);
+		event_add(ev, &minutely);
+	}
+	else
+	{
+		log_msg(ERR, "Failed to open %s for instrumentation information output!", HONAS_INSTRUMENTATION);
+	}
+}
+
 int main(int argc, char** argv)
 {
-	char* program_name = "honas-gather";
+	const char* program_name = "honas-gather";
 	int daemonize = 0;
 	int syslogenabled = 0;
 
@@ -1072,6 +1135,9 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
+	// Initialize Honas instrumentation.
+	init_instrumentation(ctx.ev_base);
+
 	// Run the main processing loop (listen for events on DNStap).
 	log_msg(INFO, "Starting main processing loop...");
 	if (event_base_dispatch(ctx.ev_base) != 0)
@@ -1103,6 +1169,9 @@ int main(int argc, char** argv)
 
 	/* Clean shutdown; persist active current state */
 	close_state(&current_active_state);
+
+	// Clean up and finalize instrumentation.
+	finalize_instrumentation();
 
 	/* Destroy previously initialized data */
 	honas_gather_config_destroy(&config);
