@@ -45,6 +45,18 @@ static char* get_timestamp_string(time_t ts)
 	return strbuf;
 }
 
+// Compute the fill rate of a Bloom filter, given s and m.
+static const double bloom_fill_rate(const uint32_t s, const uint32_t m)
+{
+	return (double)s / (double)m;
+}
+
+// Compute the actual false positive rate of a Bloom filter, given s, m and k.
+static const double bloom_actual_fpr(const double fr, const uint32_t k)
+{
+	return pow(fr, (double)k);
+}
+
 static void show_general_information(honas_state_t* state, FILE* out)
 {
 	fprintf(out, "\n## Version information ##\n\n");
@@ -73,6 +85,11 @@ static void show_general_information(honas_state_t* state, FILE* out)
 		uint32_t bits_set = state->filter_bits_set[i];
 		uint32_t est_nr_host_names = bloom_approx_count(filter_size, state->header->number_of_hashes, bits_set);
 		fprintf(out, "%2u. Number of bits set: %10u (Estimated number of host names: %10u)\n", i + 1, bits_set, est_nr_host_names);
+
+		// Calculate and print the fill rate of the Bloom filter and its actual false positive rate.
+		const double fillrate = bloom_fill_rate(bits_set, state->header->number_of_bits_per_filter);
+		fprintf(out, "    Fill Rate:        %.10f (False positive probability:   %.10f)\n"
+			, fillrate, bloom_actual_fpr(fillrate, state->header->number_of_hashes));
 	}
 	fprintf(out, "\n");
 }
