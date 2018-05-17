@@ -31,6 +31,8 @@
 
 #include "instrumentation.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/resource.h>
 
 // Increments and updates the number of processed queries.
 void instrumentation_increment_processed(struct instrumentation* p_inst)
@@ -59,6 +61,31 @@ void instrumentation_increment_skipped(struct instrumentation* p_inst)
 	}
 }
 
+// Increments and updates the number of queries per type (A, AAAA, NS, MX).
+void instrumentation_increment_type(struct instrumentation* p_inst, const ldns_rr_type qtype)
+{
+	if (p_inst)
+	{
+		switch (qtype)
+		{
+			case LDNS_RR_TYPE_A:
+			++p_inst->n_a_queries;
+				break;
+			case LDNS_RR_TYPE_AAAA:
+			++p_inst->n_aaaa_queries;
+				break;
+			case LDNS_RR_TYPE_NS:
+			++p_inst->n_ns_queries;
+				break;
+			case LDNS_RR_TYPE_MX:
+			++p_inst->n_mx_queries;
+				break;
+			default:
+				break;
+		}
+	}
+}
+
 // Dumps the instrumentation data so far. str_length is the maximum length of out_str.
 void instrumentation_dump(struct instrumentation* p_inst, char* const out_str, const size_t str_length)
 {
@@ -67,10 +94,18 @@ void instrumentation_dump(struct instrumentation* p_inst, char* const out_str, c
 		// Calculate aggregated fields.
 		p_inst->n_queries_sec = p_inst->n_processed_queries / INSTRUMENTATION_INTERVAL_SEC;
 
+		// Get usage information about the running process.
+		struct rusage r_usage;
+		getrusage(RUSAGE_SELF,&r_usage);
+
+		// Set the resource information accordingly.
+		p_inst->memory_usage_kb = r_usage.ru_maxrss;
+
 		// Dump the instrumentation data to a structured single-line string.
-		snprintf(out_str, str_length, "Instrumentation: n_proc=%zu,n_acc=%zu,n_skip=%zu,n_qsec=%zu\n"
+		snprintf(out_str, str_length, "Instrumentation: n_proc=%zu,n_acc=%zu,n_skip=%zu,n_qsec=%zu,n_qa=%zu,n_qaaaa=%zu,n_qns=%zu,n_qmx=%zu,mem_usg_kb=%zu\n"
 			, p_inst->n_processed_queries, p_inst->n_accepted_queries, p_inst->n_skipped_queries
-			, p_inst->n_queries_sec);
+			, p_inst->n_queries_sec, p_inst->n_a_queries, p_inst->n_aaaa_queries
+			, p_inst->n_ns_queries, p_inst->n_mx_queries, p_inst->memory_usage_kb);
 	}
 }
 
@@ -83,5 +118,34 @@ void instrumentation_reset(struct instrumentation* p_inst)
 		p_inst->n_accepted_queries = 0;
 		p_inst->n_skipped_queries = 0;
 		p_inst->n_queries_sec = 0;
+		p_inst->n_a_queries = 0;
+		p_inst->n_aaaa_queries = 0;
+		p_inst->n_ns_queries = 0;
+		p_inst->n_mx_queries = 0;
+	}
+}
+
+// Allocates and initializes a new instrumentation structure.
+const bool instrumentation_initialize(struct instrumentation** pp_inst)
+{
+	if (pp_inst)
+	{
+		// Allocate and zero-initialize a new instrumentation structure.
+		*pp_inst = (struct instrumentation*)calloc(1, sizeof(struct instrumentation));
+		if (*pp_inst)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// Destroys an instrumentation structure.
+void instrumentation_destroy(struct instrumentation* p_inst)
+{
+	if (p_inst)
+	{
+		free(p_inst);
 	}
 }

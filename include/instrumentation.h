@@ -32,21 +32,38 @@
 #define INSTRUMENTATION_INTERVAL_SEC	60
 
 #include <stddef.h>
+#include <stdbool.h>
+#include <ldns/ldns.h>
 
 // The instrumentation data structure that will be written to a file periodically.
 struct instrumentation
 {
 	// Specifies the total number of processed queries.
-	size_t	n_processed_queries;
+	size_t		n_processed_queries;
 
 	// Specifies the number of skipped (invalid and irrelevant) queries.
-	size_t	n_skipped_queries;
+	size_t		n_skipped_queries;
 
 	// Specifies the number of accepted (relevant) queries.
-	size_t	n_accepted_queries;
+	size_t		n_accepted_queries;
 
 	// Aggregate field that specifies the number of processed queries per second.
-	size_t	n_queries_sec;
+	size_t		n_queries_sec;
+
+	// Specifies the number of A queries.
+	size_t		n_a_queries;
+
+	// Specifies the number of AAAA queries.
+	size_t		n_aaaa_queries;
+
+	// Specifies the number of NS queries.
+	size_t		n_ns_queries;
+
+	// Specifies the number of MX queries.
+	size_t		n_mx_queries;
+
+	// Specifies the current memory usage of the process in kilobytes.
+	size_t		memory_usage_kb;
 };
 
 // Increments and updates the number of processed queries.
@@ -58,10 +75,19 @@ void instrumentation_increment_accepted(struct instrumentation* p_inst);
 // Increments and updates the number of skipped queries.
 void instrumentation_increment_skipped(struct instrumentation* p_inst);
 
+// Increments and updates the number of queries per type (A, AAAA, NS, MX).
+void instrumentation_increment_type(struct instrumentation* p_inst, const ldns_rr_type qtype);
+
 // Dumps the instrumentation data so far. str_length is the maximum length of out_str.
 void instrumentation_dump(struct instrumentation* p_inst, char* const out_str, const size_t str_length);
 
 // Resets the instrumentation data so far.
 void instrumentation_reset(struct instrumentation* p_inst);
+
+// Allocates and initializes a new instrumentation structure.
+const bool instrumentation_initialize(struct instrumentation** pp_inst);
+
+// Destroys an instrumentation structure.
+void instrumentation_destroy(struct instrumentation* p_inst);
 
 #endif // INSTRUMENTATION_H

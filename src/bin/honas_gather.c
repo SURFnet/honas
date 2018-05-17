@@ -63,7 +63,7 @@ static char* config_file = DEFAULT_HONAS_GATHER_CONFIG_PATH;
 static FILE* inst_fd = NULL;
 
 // Structure keeping track of the instrumentation information.
-struct instrumentation inst_data;
+struct instrumentation* inst_data;
 
 // --------------------------------------------------------------------------------------------------------
 
@@ -81,8 +81,8 @@ struct capture
         struct event_base*              ev_base;
         struct evconnlistener*          ev_connlistener;
         struct event*                   ev_sighup;
-	size_t				count_written;
-	size_t				bytes_written;
+	struct event*			ev_inst_timer;
+	int				remaining_connections;
 };
 
 struct capture ctx;
@@ -93,6 +93,7 @@ struct connection
 	conn_state			state;
 	size_t				count_read;
 	size_t				bytes_read;
+	size_t				bytes_skip;
 	size_t				len_buf;
 	size_t				len_frame_payload;
 	size_t				len_frame_total;
@@ -186,6 +187,7 @@ static void conn_destroy(struct connection** conn)
 static void cb_close_conn(struct bufferevent* bev, short error, void *arg)
 {
         struct connection* conn = (struct connection*)arg;
+	struct capture* ctx = conn->context;
 
         if (error & BEV_EVENT_ERROR)
         {
@@ -202,6 +204,12 @@ static void cb_close_conn(struct bufferevent* bev, short error, void *arg)
          */
         bufferevent_free(bev);
         conn_destroy(&conn);
+
+	++ctx->remaining_connections;
+	if (ctx->remaining_connections == 1)
+	{
+		evconnlistener_enable(ctx->ev_connlistener);
+	}
 }
 
 // Is there a full frame available for reading?
@@ -269,6 +277,11 @@ static bool can_read_full_frame(struct connection* conn)
 	if (conn->len_buf < conn->len_frame_total)
 	{
 		log_msg(WARN, "Incomplete message (have %zd bytes, want %u)",  conn->len_buf, conn->len_frame_total);
+		if (conn->len_frame_total > CAPTURE_HIGH_WATERMARK)
+		{
+			log_msg(DEBUG, "Skipping %zu byte message (%zu buffer)!", conn->len_frame_total, CAPTURE_HIGH_WATERMARK);
+			conn->bytes_skip = conn->len_frame_total;
+		}
 		return false;
 	}
 
@@ -343,20 +356,34 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 				// Also, only queries for the A, NS, MX, AAAA record types are accepted.
 				if (qname && qclass == LDNS_RR_CLASS_IN && query_is_valid_dns_type(qtype))
 				{
-					// Store the DNS query in the Bloom filters.
+					// Convert all data accordingly.
 					char* hostname = ldns_rdf2str(qname);
 					const size_t hostname_length = strlen(hostname);
-					log_msg(INFO, "Client %s Query: %s, %s for '%s'", str_in_addr(&client), ldns_rr_class2str(qclass), ldns_rr_type2str(qtype), hostname);
+					char* class_str = ldns_rr_class2str(qclass);
+					char* type_str = ldns_rr_type2str(qtype);
+
+					// Store the DNS query in the Bloom filters.
+					log_msg(DEBUG, "Client %s Query: %s, %s for '%s'", str_in_addr(&client), class_str, type_str, hostname);
 					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length);
 
 					// Update the instrumentation elements.
-					instrumentation_increment_accepted(&inst_data);
+					instrumentation_increment_accepted(inst_data);
+					instrumentation_increment_type(inst_data, qtype);
 
-					// Free the hostname string and set the return value.
+					// Free the converted values.
+					free(type_str);
+					free(class_str);
 					free(hostname);
-					return_val = true;
 				}
 			}
+
+			// The packet was succesfully decoded, even if not processed.
+			return_val = true;
+
+		}
+		else
+		{
+			instrumentation_increment_skipped(inst_data);
 		}
 
 		// Free the LDNS resources.
@@ -364,11 +391,10 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 	}
 	else
 	{
-		// Update instrumentation elements.
-		instrumentation_increment_skipped(&inst_data);
+		instrumentation_increment_skipped(inst_data);
 	}
 
-	instrumentation_increment_processed(&inst_data);
+	instrumentation_increment_processed(inst_data);
 	return return_val;
 }
 
@@ -390,36 +416,36 @@ static void process_data_frame(struct connection* conn)
 	const int n = evbuffer_peek(conn->ev_input, conn->len_frame_total, NULL, vecs, n_vecs);
 	assert(n == n_vecs);
 
-	// Find out what the total frame size is.
+	// Find out what the total frame size is and read the data into a local buffer.
 	size_t bytes_read = 0;
+	uint8_t buf[4096];
 	for (int i = 0; i < n_vecs; i++)
 	{
-		bytes_read += vecs[i].iov_len;
-	}
+		size_t len = vecs[i].iov_len;
 
-	// Read out the frame data into a new buffer.
-	uint8_t* buf = (uint8_t*)malloc(bytes_read);
-	if (buf)
-	{
-		size_t total_read = 0;
-		for (int i = 0; i < n_vecs; i++)
+		// Only read up to 'conn->len_frame_total' bytes.
+		if (bytes_read + len > conn->len_frame_total)
 		{
-			const size_t len = vecs[i].iov_len;
-			memcpy(buf + total_read, vecs[i].iov_base, len);
-			total_read += len;
+			len = conn->len_frame_total - bytes_read;
 		}
+
+		// Read the IOvec into a local buffer.
+		memcpy(buf + bytes_read, vecs[i].iov_base, len);
+		bytes_read += len;
 	}
 
 	/* Check that exactly the right number of bytes were written. */
+	log_msg(DEBUG, "Read %zu bytes from the event buffer; total frame length is %zu.", bytes_read, conn->len_frame_total);
 	assert(bytes_read == conn->len_frame_total);
 
 	/* Delete the data frame from the input buffer. */
 	evbuffer_drain(conn->ev_input, conn->len_frame_total);
 
 	// Check whether the data frame actually has the correct content type.
+	log_msg(DEBUG, "Verifying content type of data frame...");
 	if (verify_content_type(conn->control, (const uint8_t*)CONTENT_TYPE, strlen(CONTENT_TYPE)))
 	{
-		log_msg(INFO, "Processing data frame of %zu bytes in size...", bytes_read);
+		log_msg(DEBUG, "Processing data frame of %zu bytes in size...", bytes_read);
 	}
 	else
 	{
@@ -448,8 +474,6 @@ static void process_data_frame(struct connection* conn)
 	/* Accounting. */
 	conn->count_read += 1;
 	conn->bytes_read += bytes_read;
-	conn->context->count_written += 1;
-	conn->context->bytes_written += bytes_read;
 }
 
 static bool match_content_type(struct connection* conn)
@@ -488,7 +512,7 @@ static bool load_control_frame(struct connection* conn)
 		/* Malformed. */
 		return false;
 	}
-	log_msg(INFO, "Reading FrameStream control frame (%u bytes).", conn->len_frame_total);
+	log_msg(DEBUG, "Reading FrameStream control frame (%u bytes).", conn->len_frame_total);
 
 	/* Decode the control frame. */
 	res = fstrm_control_decode(conn->control,
@@ -603,8 +627,6 @@ static bool process_control_frame_stop(struct connection* conn)
 {
 	fstrm_res res;
 
-	conn->state = CONN_STATE_STOPPED;
-
 	/* Setup the FINISH frame. */
 	fstrm_control_reset(conn->control);
 	res = fstrm_control_set_type(conn->control, FSTRM_CONTROL_FINISH);
@@ -615,8 +637,15 @@ static bool process_control_frame_stop(struct connection* conn)
 	if (!write_control_frame(conn))
 		return false;
 
-	/* Success, though we return false in order to shut down the connection. */
-	return false;
+	conn->state = CONN_STATE_STOPPED;
+
+	/* We return true here, which prevents the caller from closing
+	 * the connection directly (with the FINISH frame still in our
+	 * write buffer). The connection will be closed after the FINISH
+	 * frame is written and the write callback (cb_write) is called
+	 * to refill the write buffer.
+	 */
+	return true;
 }
 
 // Processes the control frame in the protobuf stream.
@@ -672,8 +701,24 @@ static void cb_read(struct bufferevent *bev, void *arg)
 			return;
 
 		/* Check if the full frame has arrived. */
-		if (!can_read_full_frame(conn))
+		if ((conn->bytes_skip == 0) && !can_read_full_frame(conn))
 			return;
+
+		/* Skip bytes of oversized frames. */
+		if (conn->bytes_skip > 0)
+		{
+			size_t skip = conn->bytes_skip;
+
+			if (skip > conn->len_buf)
+			{
+				skip = conn->len_buf;
+			}
+
+			log_msg(DEBUG, "Skipping %zu bytes in frame.", skip);
+			evbuffer_drain(conn->ev_input, skip);
+			conn->bytes_skip -= skip;
+			continue;
+		}
 
 		/* Process the frame. */
 		if (conn->len_frame_payload > 0)
@@ -703,6 +748,17 @@ static void cb_read(struct bufferevent *bev, void *arg)
 	}
 }
 
+// Writes to the socket.
+static void cb_write(struct bufferevent *bev, void *arg)
+{
+	struct connection* conn = (struct connection*)arg;
+
+	if (conn->state != CONN_STATE_STOPPED)
+		return;
+
+	cb_close_conn(bev, 0, arg);
+}
+
 // Accepts connections from underlying libevent sockets.
 static void cb_accept_conn(struct evconnlistener *listener, evutil_socket_t fd, struct sockaddr *sa, int socklen, void *arg)
 {
@@ -724,7 +780,7 @@ static void cb_accept_conn(struct evconnlistener *listener, evutil_socket_t fd, 
         struct connection* conn = conn_init(ctx);
 	if (conn)
 	{
-	        bufferevent_setcb(bev, cb_read, NULL, cb_close_conn, (void*)conn);
+	        bufferevent_setcb(bev, cb_read, cb_write, cb_close_conn, (void*)conn);
         	bufferevent_setwatermark(bev, EV_READ, 0, CAPTURE_HIGH_WATERMARK);
 	        bufferevent_enable(bev, EV_READ | EV_WRITE);
 
@@ -733,6 +789,12 @@ static void cb_accept_conn(struct evconnlistener *listener, evutil_socket_t fd, 
 	else
 	{
 		log_msg(ERR, "Failed to initialize the connection!");
+	}
+
+	--ctx->remaining_connections;
+	if (ctx->remaining_connections == 0)
+	{
+		evconnlistener_disable(listener);
 	}
 }
 
@@ -970,6 +1032,16 @@ static const struct option long_options[] = {
 // Finalizes and cleans the Honas instrumentation.
 static void finalize_instrumentation()
 {
+	// Destroy the instrumentation structure.
+	instrumentation_destroy(inst_data);
+
+	// Destroy the timer event.
+	if (ctx.ev_inst_timer)
+	{
+		event_free(ctx.ev_inst_timer);
+	}
+
+	// Close the instrumentation file.
 	if (inst_fd)
 	{
 		fclose(inst_fd);
@@ -985,34 +1057,40 @@ static void instrumentation_event(evutil_socket_t fd, short what, void *arg)
 	char dumped[1024];
 	instrumentation_dump(inst_arg, dumped, sizeof(dumped));
 	fputs(dumped, inst_fd);
+	fflush(inst_fd);
 
 	// Reset the instrumentation data.
 	instrumentation_reset(inst_arg);
 
 	// Some informative logging.
-	log_msg(INFO, dumped);
+	log_msg(DEBUG, dumped);
 }
 
 // Initializes the Honas instrumentation, writing to a separate logfile.
 static void init_instrumentation(struct event_base* base)
 {
+	// Initialize instrumentation data structure.
+	if (!instrumentation_initialize(&inst_data))
+	{
+		log_msg(ERR, "Failed to initialize instrumentation structure!");
+		return;
+	}
+
 	// Open the instrumentation logfile.
-	inst_fd = fopen(HONAS_INSTRUMENTATION, "wb");
+	inst_fd = fopen(HONAS_INSTRUMENTATION, "ab");
 	if (inst_fd)
 	{
 		log_msg(INFO, "Opened %s for instrumentation information output.", HONAS_INSTRUMENTATION);
 
-		// Initialize instrumentation data structure.
-		instrumentation_reset(&inst_data);
-
 		// Set the instrumentation timer.
 		struct timeval minutely = { 60, 0 };
-		struct event* ev = event_new(base, -1, EV_PERSIST, instrumentation_event, &inst_data);
-		event_add(ev, &minutely);
+		ctx.ev_inst_timer = event_new(base, -1, EV_PERSIST, instrumentation_event, inst_data);
+		event_add(ctx.ev_inst_timer, &minutely);
 	}
 	else
 	{
 		log_msg(ERR, "Failed to open %s for instrumentation information output!", HONAS_INSTRUMENTATION);
+		instrumentation_destroy(inst_data);
 	}
 }
 
@@ -1096,7 +1174,7 @@ int main(int argc, char** argv)
 		// We have to kill the parent process.
 		else if (process_id > 0)
 		{
-			log_msg(INFO, "PID of forked process is %d", process_id);
+			log_msg(DEBUG, "PID of forked process is %d", process_id);
 			return 0;
 		}
 	}
@@ -1137,6 +1215,9 @@ int main(int argc, char** argv)
 
 	// Initialize Honas instrumentation.
 	init_instrumentation(ctx.ev_base);
+
+	// Allow infinitely many connections.
+	ctx.remaining_connections = -1;
 
 	// Run the main processing loop (listen for events on DNStap).
 	log_msg(INFO, "Starting main processing loop...");
