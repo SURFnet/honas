@@ -36,6 +36,7 @@
 #include "hyperloglog.h"
 #include "includes.h"
 #include "inet.h"
+#include "subnet_activity.h"
 
 #define HONAS_STATE_FILE_MAGIC "DNSBLOOM"
 #define CURRENT_HONAS_STATE_MAJOR_VERSION 1
@@ -218,9 +219,11 @@ extern void honas_state_destroy(honas_state_t* state);
  * \param client           The client that made the host name lookup request
  * \param host_name        The host name that was being looked up
  * \param host_name_length The length of the host name that was being looked up
+ * \param subnet_act       A pointer to a subnet activity structure
  * \ingroup honas_state
  */
-extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length);
+extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name
+	, size_t host_name_length, struct subnet_activity* subnet_act);
 
 /** Check if the host name hash matches possible lookups
  *
@@ -243,5 +246,14 @@ extern uint32_t honas_state_check_host_name_lookups(honas_state_t* state, const 
  * \ingroup honas_state
  */
 extern void honas_state_persist(honas_state_t* state, const char* filename, bool blocking);
+
+/** Aggregate two Bloom filter states having the same parameters.
+ *
+ * Takes the bitwise OR of 'target' and 'source', and places the result in 'target'.
+ *
+ * Returns true if the operation succeeded, and false it failed. The operation may
+ * fail if the parameters are not the same.
+ */
+extern const bool honas_state_aggregate_combine(honas_state_t* target, honas_state_t* source);
 
 #endif /* HONAS_STATE_H */

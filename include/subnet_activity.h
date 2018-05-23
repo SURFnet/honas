@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Gijs Rijnders, SURFnet
+ * Copyright (c) 2017 Gijs Rijnders, SURFnet
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,31 +25,18 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "../src/input_dns_socket.c"
+#ifndef HONAS_SUBNET_ACTIVITY_H
+#define HONAS_SUBNET_ACTIVITY_H
 
-#include <check.h>
+#include <stdbool.h>
 
-START_TEST(test_init_destroy)
-{
-        input_dns_socket_t* state = NULL;
-        input_dns_socket_init(&state);
-        input_dns_socket_destroy(state);
-}
-END_TEST
-
-START_TEST(test_parse_input_line)
+// The subnet activity metadata structure.
+struct subnet_activity
 {
 
-}
-END_TEST
+};
 
-Suite* make_suite(void)
-{
-	TCase* tc_core = tcase_create("Tests");
-	tcase_add_test(tc_core, test_init_destroy);
-	tcase_add_test(tc_core, test_parse_input_line);
+// Loads the subnet activity file and initializes the required logic.
+const bool subnet_activity_initialize(const char* subnetfile, struct subnet_activity* p_subact);
 
-	Suite* s = suite_create("Honas input dns-socket");
-	suite_add_tcase(s, tc_core);
-	return s;
-}
+#endif /* HONAS_SUBNET_ACTIVITY_H */

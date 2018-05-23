@@ -243,7 +243,7 @@ static void filter_index_host_name_hash_transform(uint32_t filter_index, const b
 	}
 }
 
-void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length)
+void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, struct subnet_activity* subnet_act)
 {
 	/* Check if more than a second has passed since the previous request */
 	if (state->header->last_request < timestamp) {
@@ -420,4 +420,43 @@ void honas_state_destroy(honas_state_t* state)
 		state->mmap = NULL;
 		state->size = 0;
 	}
+}
+
+// NOTE: This function assumes that the order of the Bloom filters in each state file is the same!
+// For example: If the seed for the Bloom filters is a sequence number, the sequence number must
+// be applied in the same order in both target and source.
+const bool honas_state_aggregate_combine(honas_state_t* target, honas_state_t* source)
+{
+	// Check whether the pointers are valid.
+	if (target && source)
+	{
+		// Check whether the parameters k and m are the same, and if the state files both
+		// contain the same number of filters.
+		if (target->header->number_of_bits_per_filter == source->header->number_of_bits_per_filter
+			&& target->header->number_of_hashes == source->header->number_of_hashes
+			&& target->header->number_of_filters == source->header->number_of_filters)
+		{
+			// Loop over all filters in the target state.
+			for (size_t i = 0; i < target->header->number_of_filters; ++i)
+			{
+				// Take the bitwise OR of the target and source Bloom filter.
+				byte_slice_bitwise_or(target->filters[i], source->filters[i]);
+
+				// Merge the HyperLogLog structure for client count in both states.
+				hllMerge(&target->client_count, &source->client_count);
+
+				// Merge the HyperLogLog structure for host name count in both states.
+				hllMerge(&target->host_name_count, &source->host_name_count);
+			}
+
+			// The operation succeeded.
+			return true;
+		}
+
+		// The parameters or filter count are invalid.
+		return false;
+	}
+
+	// The pointers are invalid.
+	return false;
 }

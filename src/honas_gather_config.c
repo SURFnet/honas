@@ -33,6 +33,7 @@
 void honas_gather_config_init(honas_gather_config_t* config)
 {
 	config->bloomfilter_path = NULL;
+	config->subnet_activity_path = NULL;
 	config->period_length = 0;
 	config->number_of_filters = 0;
 	config->number_of_bits_per_filter = 0;
@@ -74,7 +75,11 @@ int honas_gather_config_parse_item(const char* UNUSED(filename), honas_gather_co
 	if (strcmp(keyword, "bloomfilter_path") == 0 && config->bloomfilter_path != NULL)
 		free(config->bloomfilter_path);
 
+	if (strcmp(keyword, "subnet_activity_path") == 0 && config->subnet_activity_path != NULL)
+		free(config->subnet_activity_path);
+
 	_config_parse_and_check_value(bloomfilter_path, string_value, strlen(value) > 0);
+	_config_parse_and_check_value(subnet_activity_path, string_value, strlen(value) > 0);
 	_config_parse_and_check_value(period_length, uint32_value, value > 0);
 	_config_parse_and_check_value(number_of_filters, uint32_value, value > 0);
 	_config_parse_and_check_value(number_of_bits_per_filter, uint32_value, value > 0);
@@ -108,8 +113,15 @@ void honas_gather_config_finalize(honas_gather_config_t* config)
 
 void honas_gather_config_destroy(honas_gather_config_t* config)
 {
-	if (config->bloomfilter_path != NULL) {
+	if (config->bloomfilter_path != NULL)
+	{
 		free(config->bloomfilter_path);
 		config->bloomfilter_path = NULL;
+	}
+
+	if (config->subnet_activity_path != NULL)
+	{
+		free(config->subnet_activity_path);
+		config->subnet_activity_path = NULL;
 	}
 }

@@ -36,6 +36,7 @@
  */
 typedef struct {
 	char* bloomfilter_path;
+	char* subnet_activity_path;
 	uint32_t period_length;
 	uint32_t number_of_filters;
 	uint32_t number_of_bits_per_filter;

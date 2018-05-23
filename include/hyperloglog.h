@@ -112,4 +112,13 @@ extern int hllSparseToDense(hll* hll);
  */
 extern void hllDestroy(hll* hll);
 
+/* Merge by computing MAX(registers[i],hll[i]) the HyperLogLog 'src'
+ * with the HyperLogLog pointed to by 'dst'.
+ *
+ * Added to Honas to allow the merging/aggregation of Honas states.
+ *
+ * If the HyperLogLog is sparse, it is first converted to dense.
+ */
+extern void hllMerge(hll* dst, hll* src);
+
 #endif /* HYPERLOGLOG_H */

@@ -45,7 +45,7 @@ honas_src = ['src/honas_state.c', 'src/bloom.c', 'src/byte_slice.c', 'src/hyperl
 
 gather_src = honas_src + ['src/bin/honas_gather.c']
 gather_src += ['src/honas_gather_config.c', 'src/utils.c', 'src/config.c', 'src/read_file.c', 'src/inet.c', 'src/utils.c']
-gather_src += ['src/inet.c', 'src/utils.c', 'src/dnstap.pb/dnstap.pb-c.c', 'src/instrumentation.c']
+gather_src += ['src/inet.c', 'src/utils.c', 'src/dnstap.pb/dnstap.pb-c.c', 'src/instrumentation.c', 'src/subnet_activity.c']
 executable('honas-gather', gather_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep, libevent_dep, fstrm_dep, protobuf_dep, ldns_dep])
 
 search_src = honas_src + ['src/bin/honas_search.c']
@@ -54,6 +54,9 @@ executable('honas-search', search_src, include_directories: inc, install: true, 
 
 info_src = honas_src + ['src/bin/honas_info.c']
 executable('honas-info', info_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep])
+
+combine_src = honas_src + ['src/bin/honas_combine.c']
+executable('honas-combine', combine_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep])
 
 ###############
 #  Unittests  #
@@ -84,6 +87,10 @@ test('hyperloglog tests', test_hyperloglog_exe, env: ['CK_DEFAULT_TIMEOUT=90'])
 test_bloom_src = test_main_src + ['tests/bloom.c', 'src/bloom.c', 'src/byte_slice.c']
 test_bloom_exe = executable('test_bloom', test_bloom_src, include_directories: inc, build_by_default: false, dependencies: [check_dep])
 test('bloom tests', test_bloom_exe)
+
+test_state_agg_src = test_main_src + ['tests/state_aggregation.c', 'src/byte_slice.c', 'src/bloom.c', 'src/honas_state.c', 'src/hyperloglog.c', 'src/combinations.c']
+test_state_agg_exe = executable('test_state_aggregation', test_state_agg_src, include_directories: inc, build_by_default: false, dependencies: [check_dep, openssl_dep])
+test('state aggregation tests', test_state_agg_exe)
 
 ##########################
 #  Static code analysis  #

@@ -158,6 +158,9 @@ static int search_spec_string(struct search_spec_context* ctx, const unsigned ch
 		ctx->state = HOST_NAME_MAP;
 		{ /* Process hostname */
 			uint8_t bytes[stringLen/2];
+			char debug_msg[1024];
+			strncpy(debug_msg, (char*)stringVal, stringLen);
+			log_msg(DEBUG, "Decoding hex hostname hash '%s', of length: %zu", debug_msg, stringLen);
 			if (!decode_string_hex((char*)stringVal, stringLen, bytes, sizeof(bytes))) {
 				log_msg(WARN, "Unable to hex decode hostname hash '%s'", stringVal);
 				return 1;

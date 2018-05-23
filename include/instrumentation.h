@@ -35,35 +35,49 @@
 #include <stdbool.h>
 #include <ldns/ldns.h>
 
+// The subnet aggregation structure for instrumentation contains information about
+// subnet activity in Honas.
+struct subnet_instrumentation
+{
+	// Specifies the number of subnets for which queries were received.
+	size_t				n_queried_subnets;
+
+	// Specifies the number of predefined subnets for which no queries were received.
+	size_t				n_not_queried_subnets;
+};
+
 // The instrumentation data structure that will be written to a file periodically.
 struct instrumentation
 {
 	// Specifies the total number of processed queries.
-	size_t		n_processed_queries;
+	size_t				n_processed_queries;
 
 	// Specifies the number of skipped (invalid and irrelevant) queries.
-	size_t		n_skipped_queries;
+	size_t				n_skipped_queries;
 
 	// Specifies the number of accepted (relevant) queries.
-	size_t		n_accepted_queries;
+	size_t				n_accepted_queries;
 
 	// Aggregate field that specifies the number of processed queries per second.
-	size_t		n_queries_sec;
+	size_t				n_queries_sec;
 
 	// Specifies the number of A queries.
-	size_t		n_a_queries;
+	size_t				n_a_queries;
 
 	// Specifies the number of AAAA queries.
-	size_t		n_aaaa_queries;
+	size_t				n_aaaa_queries;
 
 	// Specifies the number of NS queries.
-	size_t		n_ns_queries;
+	size_t				n_ns_queries;
 
 	// Specifies the number of MX queries.
-	size_t		n_mx_queries;
+	size_t				n_mx_queries;
 
 	// Specifies the current memory usage of the process in kilobytes.
-	size_t		memory_usage_kb;
+	size_t				memory_usage_kb;
+
+	// Contains information about DNS queries in subnets.
+	struct subnet_instrumentation	subnet_aggregates;
 };
 
 // Increments and updates the number of processed queries.
@@ -89,5 +103,8 @@ const bool instrumentation_initialize(struct instrumentation** pp_inst);
 
 // Destroys an instrumentation structure.
 void instrumentation_destroy(struct instrumentation* p_inst);
+
+// Updates the subnet activity data structure.
+void instrumentation_update_subnet_activity(struct subnet_instrumentation* p_subinst);
 
 #endif // INSTRUMENTATION_H

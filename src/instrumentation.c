@@ -149,3 +149,9 @@ void instrumentation_destroy(struct instrumentation* p_inst)
 		free(p_inst);
 	}
 }
+
+// Updates the subnet activity data structure.
+void instrumentation_update_subnet_activity(struct subnet_instrumentation* p_subinst)
+{
+
+}

@@ -14,6 +14,9 @@
  * - Remove reallocations from sparse reprenstation
  * - Rework API to use hashed values
  * - Reformatting
+ * ==================================================
+ * Changes by Gijs Rijnders, SURFnet
+ * - Readded hllMerge (required for combining Honas states)
  */
 
 /* hyperloglog.c - Redis HyperLogLog probabilistic cardinality approximation.
@@ -1061,4 +1064,29 @@ void hllDestroy(hll* hll)
 		free(hll->registers.bytes);
 	hll->registers.bytes = NULL;
 	hll->registers.len = 0;
+}
+
+void hllMerge(hll* dst, hll* src)
+{
+	// Check whether the encoding of 'src' is sparse or dense.
+	if (src->encoding == HLL_SPARSE)
+	{
+		// Convert it to dense format.
+		hllSparseToDense(src);
+	}
+
+	// Check whether the encoding of 'src' is sparse or dense.
+	if (dst->encoding == HLL_SPARSE)
+	{
+		// Convert it to dense format.
+		hllSparseToDense(dst);
+	}
+
+	// Check whether they are both dense.
+	assert(src->encoding == HLL_DENSE);
+	assert(dst->encoding == HLL_DENSE);
+
+	// Merge 'src' into 'dst'.
+	byte_slice_bitwise_or(dst->registers, src->registers);
+	dst->card = -1;
 }

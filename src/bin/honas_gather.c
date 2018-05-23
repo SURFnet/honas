@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017, Quarantainenet Holding B.V.
+ * Edited in 2018 by Gijs Rijnders, SURFnet
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -34,6 +35,7 @@
 #include "honas_gather_config.h"
 #include "honas_state.h"
 #include "instrumentation.h"
+#include "subnet_activity.h"
 
 #include <sys/un.h>
 
@@ -52,6 +54,7 @@
 #define CONTENT_TYPE		"protobuf:dnstap.Dnstap"
 #define CAPTURE_HIGH_WATERMARK	262144
 #define HONAS_INSTRUMENTATION	"/var/spool/honas/instrumentation.log"
+#define HONAS_SUBNET_FILE	"/var/spool/honas/subnet_activity.json"
 
 static const char active_state_file_name[] = "active_state";
 static honas_state_t current_active_state;
@@ -83,6 +86,7 @@ struct capture
         struct event*                   ev_sighup;
 	struct event*			ev_inst_timer;
 	int				remaining_connections;
+	struct subnet_activity		subnet_metadata;
 };
 
 struct capture ctx;
@@ -364,7 +368,7 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 
 					// Store the DNS query in the Bloom filters.
 					log_msg(DEBUG, "Client %s Query: %s, %s for '%s'", str_in_addr(&client), class_str, type_str, hostname);
-					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length);
+					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length, &ctx.subnet_metadata);
 
 					// Update the instrumentation elements.
 					instrumentation_increment_accepted(inst_data);
@@ -998,16 +1002,6 @@ static void close_state(honas_state_t* state)
 	log_msg(NOTICE, "Saved honas state to '%s'", active_state_file_name);
 }
 
-#define set_signal_handler(signal, handler)            \
-	do {                                               \
-		struct sigaction _sa = { 0 };                  \
-		_sa.sa_handler = (handler);                    \
-		if (sigaction((signal), &_sa, NULL) == -1) {   \
-			log_perror(ERR, "sigaction(" #signal ")"); \
-			exit(1);                                   \
-		}                                              \
-	} while (0)
-
 static void show_usage(const char* program_name, FILE* out)
 {
 	fprintf(out, "Usage: %s [--help] [--config <file>]\n\n", program_name);
@@ -1017,6 +1011,7 @@ static void show_usage(const char* program_name, FILE* out)
 	fprintf(out, "  -s|--syslog         Log messages to syslog\n");
 	fprintf(out, "  -v|--verbose        Be more verbose (can be used multiple times)\n");
 	fprintf(out, "  -f|--fork           Fork the process as daemon (syslog must be enabled)\n");
+	fprintf(out, "  -a|--aggregate      Aggregates queries by subnet per filter (predefined subnets)\n");
 }
 
 static const struct option long_options[] = {
@@ -1026,6 +1021,7 @@ static const struct option long_options[] = {
 	{ "syslog", no_argument, 0, 's' },
 	{ "verbose", no_argument, 0, 'v' },
 	{ "fork", no_argument, 0, 'f' },
+	{ "aggregate", no_argument, 0, 'a' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -1097,8 +1093,9 @@ static void init_instrumentation(struct event_base* base)
 int main(int argc, char** argv)
 {
 	const char* program_name = "honas-gather";
-	int daemonize = 0;
-	int syslogenabled = 0;
+	bool daemonize = false;
+	bool syslogenabled = false;
+	bool aggregate_subnets = false;
 
 	/* Parse command line arguments */
 	while (1) {
@@ -1126,7 +1123,7 @@ int main(int argc, char** argv)
 
 		case 's':
 			log_init_syslog(program_name, DEFAULT_LOG_FACILITY);
-			syslogenabled = 1;
+			syslogenabled = true;
 			break;
 
 		case 'v':
@@ -1138,7 +1135,11 @@ int main(int argc, char** argv)
 			return 1;
 
 		case 'f':
-			daemonize = 1;
+			daemonize = true;
+			break;
+
+		case 'a':
+			aggregate_subnets = true;
 			break;
 
 		default:
@@ -1215,6 +1216,12 @@ int main(int argc, char** argv)
 
 	// Initialize Honas instrumentation.
 	init_instrumentation(ctx.ev_base);
+
+	// Initialize subnet aggregation if requested.
+	if (aggregate_subnets && subnet_activity_initialize(NULL, &ctx.subnet_metadata))
+	{
+
+	}
 
 	// Allow infinitely many connections.
 	ctx.remaining_connections = -1;
