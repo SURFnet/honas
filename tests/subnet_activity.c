@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2018 Gijs Rijnders, SURFnet
+ * Copyright (c) 2017, Quarantainenet Holding B.V.
+ * Copyright (c) 2014, Salvatore Sanfilippo <antirez at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,58 +26,29 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef HONAS_SUBNET_ACTIVITY_H
-#define HONAS_SUBNET_ACTIVITY_H
+#include <check.h>
+#include "subnet_activity.h"
 
-#include "inet.h"
-#include <stdbool.h>
+#define TEST_SUBNET_ACTIVITY_FILE "/home/gijs/honas/etc/example_subnet_definitions.json"
 
-// Defines a prefix.
-struct prefix_match
+START_TEST(test_subnet_activity)
 {
-	// The IP address.
-	struct in_addr46 prefix;
+	struct subnet_activity subnet_act;
 
-	// The prefix length.
-	unsigned int length;
-};
+	// Create a new subnet activity state.
+	ck_assert(subnet_activity_initialize(TEST_SUBNET_ACTIVITY_FILE, &subnet_act));
 
-// Defines an entity that has prefixes assigned.
-struct entity
+	// Destroy the subnet activity state.
+	subnet_activity_destroy(&subnet_act);
+}
+END_TEST
+
+Suite* make_suite(void)
 {
-	// The name of the entity.
-	char name[128];
+	TCase* tc_core = tcase_create("Tests");
+	tcase_add_test(tc_core, test_subnet_activity);
 
-	// A list of prefixes that are associated to this entity.
-	struct prefix_match* associated_prefixes[32];
-
-	// The number of prefixes currently associated.
-	size_t ass_prefix_count;
-};
-
-// The subnet activity metadata structure.
-struct subnet_activity
-{
-	// A list of entities that are registered for testing subnet activity.
-	struct entity* entities[1024];
-
-	// The number of entities currently registered.
-	size_t registered_entities;
-
-	// A list of prefixes that are registered.
-	struct prefix_match* prefixes[1024];
-
-	// The number of prefixes currently registered.
-	size_t registered_prefixes;
-};
-
-// Loads the subnet activity file and initializes the required logic.
-const bool subnet_activity_initialize(const char* subnetfile, struct subnet_activity* p_subact);
-
-// Tests an IP-address to a specific entity. The entity and prefix is returned.
-const bool subnet_activity_match_prefix(const struct in_addr46* client, const sa_family_t af, struct subnet_activity* p_subact);
-
-// Destroys and frees the subnet activity structure.
-void subnet_activity_destroy(struct subnet_activity* p_subact);
-
-#endif /* HONAS_SUBNET_ACTIVITY_H */
+	Suite* s = suite_create("Honas Subnet Activity");
+	suite_add_tcase(s, tc_core);
+	return s;
+}
