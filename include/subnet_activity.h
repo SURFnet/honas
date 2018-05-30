@@ -29,29 +29,37 @@
 #define HONAS_SUBNET_ACTIVITY_H
 
 #include "inet.h"
+#include "uthash.h"
 #include <stdbool.h>
-
-// Defines a prefix.
-struct prefix_match
-{
-	// The IP address.
-	struct in_addr46 prefix;
-
-	// The prefix length.
-	unsigned int length;
-};
 
 // Defines an entity that has prefixes assigned.
 struct entity
 {
 	// The name of the entity.
 	char name[128];
+};
 
-	// A list of prefixes that are associated to this entity.
-	struct prefix_match* associated_prefixes[32];
+// Represents a hashable prefix, including the address and prefix length.
+struct prefix
+{
+	// The IP address.
+	struct in_addr46 address;
 
-	// The number of prefixes currently associated.
-	size_t ass_prefix_count;
+	// The prefix length.
+	unsigned int length;
+};
+
+// Defines a prefix.
+struct prefix_match
+{
+	// The hashable prefix.
+	struct prefix prefix;
+
+	// The entity with which the prefix is associated with.
+	struct entity* associated_entity;
+
+	// Hash table handle.
+	UT_hash_handle hh;
 };
 
 // The subnet activity metadata structure.
@@ -64,19 +72,39 @@ struct subnet_activity
 	size_t registered_entities;
 
 	// A list of prefixes that are registered.
-	struct prefix_match* prefixes[1024];
+	struct prefix_match* prefixes;
 
 	// The number of prefixes currently registered.
 	size_t registered_prefixes;
+
+	// A hash table of entity-prefix mappings.
+	struct entity_subnet* entity_prefix_mapping;
+};
+
+// Defines error codes for the subnet activity framework.
+enum subnet_activity_error
+{
+	SA_OK,
+	SA_INVALID_ARGUMENT,
+	SA_OPEN_FILE_FAILED,
+	SA_ALLOC_FAILED,
+	SA_JSON_MAP_FAILED,
+	SA_JSON_END_MAP_FAILED,
+	SA_JSON_ARRAY_FAILED,
+	SA_JSON_END_ARRAY_FAILED,
+	SA_JSON_MAP_KEY_FAILED,
+	SA_IPADDRESS_PARSE_FAILED,
+	SA_JSON_SPEC_STRING_FAILED,
+	SA_JSON_SPEC_INTEGER_FAILED,
 };
 
 // Loads the subnet activity file and initializes the required logic.
-const bool subnet_activity_initialize(const char* subnetfile, struct subnet_activity* p_subact);
+const enum subnet_activity_error subnet_activity_initialize(const char* subnetfile, struct subnet_activity* p_subact);
 
 // Tests an IP-address to a specific entity. The entity and prefix is returned.
-const bool subnet_activity_match_prefix(const struct in_addr46* client, const sa_family_t af, struct subnet_activity* p_subact);
+const enum subnet_activity_error subnet_activity_match_prefix(const struct in_addr46* addr, const unsigned int plen, struct subnet_activity* p_subact, struct prefix_match** const pp_result);
 
 // Destroys and frees the subnet activity structure.
-void subnet_activity_destroy(struct subnet_activity* p_subact);
+const enum subnet_activity_error subnet_activity_destroy(struct subnet_activity* p_subact);
 
 #endif /* HONAS_SUBNET_ACTIVITY_H */

@@ -58,7 +58,42 @@ struct subnet_activity_spec_context
 	} state;
 
 	struct subnet_activity* subnet_metadata;
+	enum subnet_activity_error sa_status_code;
+
+	// Current processing state variables.
+	struct prefix_match* current_prefix;
+	struct entity* current_entity;
+	struct in_addr46 current_ipaddr;
 };
+
+// Adds a prefix to the hash table if it does not already exist.
+static enum subnet_activity_error add_prefix_hh(struct prefix_match** ht, struct in_addr46* addr, const unsigned int plen, struct entity* p_entity, struct prefix_match** current_p_prefix)
+{
+	// Try to find whether the entry already exists.
+	struct prefix_match* entry = NULL;
+	struct prefix p;
+	memset(&p, 0, sizeof(struct prefix));
+	memcpy(&p.address, addr, sizeof(struct in_addr46));
+	p.length = plen;
+	HASH_FIND(hh, *ht, &p, sizeof(struct prefix), entry);
+
+	// Add the prefix with the entity to the hash table.
+	if (entry == NULL)
+	{
+		entry = (struct prefix_match*)calloc(1, sizeof(struct prefix_match));
+		if (!entry)
+		{
+			return SA_ALLOC_FAILED;
+		}
+
+		memcpy(&entry->prefix, &p, sizeof(struct prefix));
+		entry->associated_entity = p_entity;
+		HASH_ADD(hh, *ht, prefix, sizeof(struct prefix), entry);
+		*current_p_prefix = entry;
+	}
+
+	return SA_OK;
+}
 
 // Reads an integer from the JSON file.
 static int subnet_activity_spec_integer(struct subnet_activity_spec_context* ctx, long long integerVal)
@@ -66,11 +101,16 @@ static int subnet_activity_spec_integer(struct subnet_activity_spec_context* ctx
 	switch (ctx->state)
 	{
 		case PREFIX_MAPPING_EXPECT_LENGTH:
-			// Parse the prefix length.
-			ctx->subnet_metadata->prefixes[ctx->subnet_metadata->registered_prefixes - 1]->length = (unsigned int)integerVal;
+			// Add the prefix to internal storage.
+			if ((ctx->sa_status_code = add_prefix_hh(&ctx->subnet_metadata->prefixes, &ctx->current_ipaddr, (unsigned int)integerVal, ctx->current_entity
+				, &ctx->current_prefix)) == SA_OK)
+			{
+				++ctx->subnet_metadata->registered_prefixes;
+			}
 			ctx->state = PREFIX_MAPPING;
 			return 1;
 		default:
+			ctx->sa_status_code = SA_JSON_SPEC_INTEGER_FAILED;
 			return 0;
 	}
 }
@@ -82,10 +122,11 @@ static int subnet_activity_spec_string(struct subnet_activity_spec_context* ctx,
 	{
 		case SUBNET_MAPPING_EXPECT_ENTITY:
 			// Parse the entity name.
-			strncpy(ctx->subnet_metadata->entities[ctx->subnet_metadata->registered_entities]->name, (char*)stringVal, 128);
+			strncpy(ctx->subnet_metadata->entities[ctx->subnet_metadata->registered_entities - 1]->name, (char*)stringVal, stringLen);
 			ctx->state = SUBNET_MAPPING;
 			return 1;
 		default:
+			ctx->sa_status_code = SA_JSON_SPEC_STRING_FAILED;
 			return 0;
 	}
 }
@@ -117,43 +158,32 @@ static int subnet_activity_spec_map_key(struct subnet_activity_spec_context* ctx
 			{
 				// Parse the prefix mapping, consisting of an IPv4/IPv6 prefix and its length.
 				// We first try to parse the IP address as IPv4.
-				struct in_addr46 tmp_client;
-				if (inet_pton(AF_INET, (char*)stringVal, &tmp_client.in.addr4) == 1)
+				memset(&ctx->current_ipaddr, 0, sizeof(struct in_addr46));
+				char ipv46[128] = { 0 };
+				strncpy(ipv46, (char*)stringVal, stringLen);
+				if (inet_pton(AF_INET, ipv46, &ctx->current_ipaddr.in.addr4) == 1)
 				{
-					// Succeeded parsing as IPv4, allocate memory and store the prefix.
-					ctx->subnet_metadata->prefixes[ctx->subnet_metadata->registered_prefixes] = calloc(1, sizeof(struct prefix_match));
-					ctx->subnet_metadata->prefixes[ctx->subnet_metadata->registered_prefixes]->prefix.af = AF_INET;
-					memcpy(&ctx->subnet_metadata->prefixes[ctx->subnet_metadata->registered_prefixes]->prefix.in.addr4, &tmp_client.in.addr4, sizeof(struct in_addr));
-					++ctx->subnet_metadata->registered_prefixes;
+					// Succeeded parsing as IPv4.
+					ctx->current_ipaddr.af = AF_INET;
 				}
 				// If it failed, we try to parse it as IPv6.
-				else if (inet_pton(AF_INET6, (char*)stringVal, &tmp_client.in.addr6) == 1)
+				else if (inet_pton(AF_INET6, ipv46, &ctx->current_ipaddr.in.addr6) == 1)
 				{
-					ctx->subnet_metadata->prefixes[ctx->subnet_metadata->registered_prefixes] = calloc(1, sizeof(struct prefix_match));
-					ctx->subnet_metadata->prefixes[ctx->subnet_metadata->registered_prefixes]->prefix.af = AF_INET6;
-					memcpy(&ctx->subnet_metadata->prefixes[ctx->subnet_metadata->registered_prefixes]->prefix.in.addr6, &tmp_client.in.addr6, sizeof(struct in6_addr));
-					++ctx->subnet_metadata->registered_prefixes;
+					// Succeeded parsing as IPv6.
+					ctx->current_ipaddr.af = AF_INET6;
 				}
 				else
 				{
 					// Failed to parse the IP-address.
+					ctx->sa_status_code = SA_IPADDRESS_PARSE_FAILED;
 					return 0;
 				}
-				// Register the prefix with the entity.
-				if (ctx->subnet_metadata->entities[ctx->subnet_metadata->registered_entities]->ass_prefix_count < 32)
-				{
-					ctx->subnet_metadata->entities[ctx->subnet_metadata->registered_entities]->associated_prefixes[
-						ctx->subnet_metadata->entities[ctx->subnet_metadata->registered_entities]->ass_prefix_count]
-						= ctx->subnet_metadata->prefixes[ctx->subnet_metadata->registered_prefixes];
-				}
-				else
-				{
-					return 0;
-				}
+
 				ctx->state = PREFIX_MAPPING_EXPECT_LENGTH;
 			return 1;
 			}
 		default:
+			ctx->sa_status_code = SA_JSON_MAP_KEY_FAILED;
 			return 0;
 	}
 }
@@ -169,12 +199,20 @@ static int subnet_activity_spec_start_map(struct subnet_activity_spec_context* c
 		case SUBNET_MAPPING_ARRAY:
 			// Initialize internal storage for the subnet mapping.
 			ctx->subnet_metadata->entities[ctx->subnet_metadata->registered_entities] = calloc(1, sizeof(struct entity));
+			ctx->current_entity = ctx->subnet_metadata->entities[ctx->subnet_metadata->registered_entities];
+			if (!ctx->subnet_metadata->entities[ctx->subnet_metadata->registered_entities])
+			{
+				ctx->sa_status_code = SA_ALLOC_FAILED;
+				return 0;
+			}
+			++ctx->subnet_metadata->registered_entities;
 			ctx->state = SUBNET_MAPPING;
 			return 1;
 		case PREFIX_MAPPING_ARRAY:
 			ctx->state = PREFIX_MAPPING;
 			return 1;
 		default:
+			ctx->sa_status_code = SA_JSON_MAP_FAILED;
 			return 0;
 	}
 }
@@ -195,6 +233,7 @@ static int subnet_activity_spec_end_map(struct subnet_activity_spec_context* ctx
 			ctx->state = PREFIX_MAPPING_ARRAY;
 			return 1;
 		default:
+			ctx->sa_status_code = SA_JSON_END_MAP_FAILED;
 			return 0;
 	}
 }
@@ -213,6 +252,7 @@ static int subnet_activity_spec_start_array(struct subnet_activity_spec_context*
 			ctx->state = PREFIX_MAPPING_ARRAY;
 			return 1;
 		default:
+			ctx->sa_status_code = SA_JSON_ARRAY_FAILED;
 			return 0;
 	}
 }
@@ -231,6 +271,7 @@ static int subnet_activity_spec_end_array(struct subnet_activity_spec_context* c
 			ctx->state = SUBNET_MAPPING;
 			return 1;
 		default:
+			ctx->sa_status_code = SA_JSON_END_ARRAY_FAILED;
 			return 0;
 	}
 }
@@ -252,18 +293,18 @@ static yajl_callbacks subnet_activity_json_callbacks =
 };
 
 // Loads the subnet activity file and initializes the required logic.
-const bool subnet_activity_initialize(const char* subnetfile, struct subnet_activity* p_subact)
+const enum subnet_activity_error subnet_activity_initialize(const char* subnetfile, struct subnet_activity* p_subact)
 {
 	// Initialize a context structure.
 	struct subnet_activity_spec_context ctx =
 	{
 		.state = INIT,
 		.subnet_metadata = p_subact,
+		.sa_status_code = SA_OK,
 	};
 
-	// Initialize internal fields.
-	p_subact->registered_entities = 0;
-	p_subact->registered_prefixes = 0;
+	// Initialize everything to zero.
+	memset(p_subact, 0, sizeof(struct subnet_activity));
 
 	// Try to open the subnet definition file.
 	FILE* job_fh = NULL;
@@ -272,12 +313,12 @@ const bool subnet_activity_initialize(const char* subnetfile, struct subnet_acti
 		job_fh = fopen(subnetfile, "r");
 		if (!job_fh)
 		{
-			return false;
+			return SA_OPEN_FILE_FAILED;
 		}
 	}
 	else
 	{
-		return false;
+		return SA_INVALID_ARGUMENT;
 	}
 
 	// Initialize the JSON parser.
@@ -288,7 +329,6 @@ const bool subnet_activity_initialize(const char* subnetfile, struct subnet_acti
 		return false;
 	}
 
-	bool result = true;
 	yajl_status status = yajl_status_ok;
 	uint8_t buf[READ_BLOCK_SIZE + 1];
 	ssize_t rd;
@@ -307,13 +347,11 @@ const bool subnet_activity_initialize(const char* subnetfile, struct subnet_acti
 		if (status != yajl_status_ok)
 		{
 			status = yajl_complete_parse(yajl);
-			result = false;
 		}
 
 		// Handle errors if required.
 		if (status != yajl_status_ok)
 		{
-			result = false;
 			break;
 		}
 	}
@@ -325,27 +363,44 @@ const bool subnet_activity_initialize(const char* subnetfile, struct subnet_acti
 		fclose(job_fh);
 	}
 
-	return result;
+	return ctx.sa_status_code;
 }
 
 // Tests an IP-address to a specific entity. The entity and prefix is returned.
-const bool subnet_activity_match_prefix(const struct in_addr46* client, const sa_family_t af, struct subnet_activity* p_subact)
+const enum subnet_activity_error subnet_activity_match_prefix(const struct in_addr46* addr, const unsigned int plen, struct subnet_activity* p_subact, struct prefix_match** const pp_result)
 {
 	// Check if the input parameters are valid.
-	if (!p_subact || !client)
+	if (!p_subact || !addr || !pp_result)
 	{
-		return false;
+		return SA_INVALID_ARGUMENT;
 	}
 
-	// TODO
+	// Check whether the address family is valid.
+	if (addr->af != AF_INET && addr->af != AF_INET6)
+	{
+		return SA_INVALID_ARGUMENT;
+	}
+
+	// Create the hashable structure.
+	struct prefix p;
+	memset(&p, 0, sizeof(struct prefix));
+	memcpy(&p.address, addr, sizeof(struct in_addr46));
+	p.length = plen;
+
+	// Find prefix by hash.
+	struct prefix_match* entry = NULL;
+	HASH_FIND(hh, p_subact->prefixes, &p, sizeof(struct prefix), entry);
+	*pp_result = entry;
+
+	return SA_OK;
 }
 
 // Destroys and frees the subnet activity structure.
-void subnet_activity_destroy(struct subnet_activity* p_subact)
+const enum subnet_activity_error subnet_activity_destroy(struct subnet_activity* p_subact)
 {
 	if (!p_subact)
 	{
-		return;
+		return SA_INVALID_ARGUMENT;
 	}
 
 	if (p_subact->registered_entities > 0 && p_subact->entities)
@@ -357,15 +412,20 @@ void subnet_activity_destroy(struct subnet_activity* p_subact)
 			p_subact->entities[i] = NULL;
 		}
 
-		// Free prefixes.
-		for (unsigned int i = 0; i < p_subact->registered_prefixes; ++i)
+		// Free the hash table with prefix-entity mappings.
+		struct prefix_match* pf_it = NULL;
+		struct prefix_match* pf_tmp = NULL;
+		HASH_ITER(hh, p_subact->prefixes, pf_it, pf_tmp)
 		{
-			free(p_subact->prefixes[i]);
-			p_subact->prefixes[i] = NULL;
+			// Free the hash table entry.
+			HASH_DEL(p_subact->prefixes, pf_it);
+			free(pf_it);
 		}
 
 		// Set counters to zero.
 		p_subact->registered_entities = 0;
 		p_subact->registered_prefixes = 0;
 	}
+
+	return SA_OK;
 }

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2017, Quarantainenet Holding B.V.
- * Copyright (c) 2014, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2018, Gijs Rijnders, SURFnet
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,15 +30,85 @@
 
 #define TEST_SUBNET_ACTIVITY_FILE "/home/gijs/honas/etc/example_subnet_definitions.json"
 
+// Print debug output if requested.
+void print_debug(struct subnet_activity* p_subact)
+{
+	// Some printing for debugging...
+	for (unsigned int i = 0; i < p_subact->registered_entities; ++i)
+	{
+		printf("Entity %s was registered.\n", p_subact->entities[i]->name);
+	}
+
+	struct prefix_match* pf_it = NULL;
+	struct prefix_match* tmp_it = NULL;
+	HASH_ITER(hh, p_subact->prefixes, pf_it, tmp_it)
+	{
+		char addrstr[64];
+		inet_ntop(pf_it->prefix.address.af, &pf_it->prefix.address.in, addrstr, sizeof(addrstr));
+		printf("Prefix %s/%i was registered to entity %s.\n", addrstr, pf_it->prefix.length, pf_it->associated_entity->name);
+	}
+}
+
 START_TEST(test_subnet_activity)
 {
 	struct subnet_activity subnet_act;
 
 	// Create a new subnet activity state.
-	ck_assert(subnet_activity_initialize(TEST_SUBNET_ACTIVITY_FILE, &subnet_act));
+	ck_assert_int_eq(subnet_activity_initialize(TEST_SUBNET_ACTIVITY_FILE, &subnet_act), SA_OK);
+
+	//print_debug(&subnet_act);
+
+	// Check if the correct number of registrations took place.
+	ck_assert_int_eq(subnet_act.registered_entities, 2);
+	ck_assert_int_eq(subnet_act.registered_prefixes, 6);
+
+	// Check for the presence of a few subnets that should be present.
+	struct prefix_match* pf_match = NULL;
+	struct in_addr46 pf = { 0 };
+	pf.af = AF_INET;
+	parse_ipv4("192.87.0.0", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 16, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match != NULL);
+	ck_assert_str_eq(pf_match->associated_entity->name, "SURFnet");
+
+	parse_ipv4("145.0.0.0", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 8, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match != NULL);
+	ck_assert_str_eq(pf_match->associated_entity->name, "SURFnet");
+
+	parse_ipv4("192.42.0.0", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 16, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match != NULL);
+	ck_assert_str_eq(pf_match->associated_entity->name, "SURFnet");
+
+	parse_ipv4("192.42.113.0", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 24, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match != NULL);
+	ck_assert_str_eq(pf_match->associated_entity->name, "netSURF");
+
+	parse_ipv4("145.220.0.0", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 16, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match != NULL);
+	ck_assert_str_eq(pf_match->associated_entity->name, "netSURF");
+
+	pf.af = AF_INET6;
+	parse_ipv6("2001:67c:6ec::", &pf.in.addr6, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 48, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match != NULL);
+	ck_assert_str_eq(pf_match->associated_entity->name, "netSURF");
+
+	// Check for prefixes that should not exist.
+	parse_ipv6("2001:678:230::", &pf.in.addr6, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 48, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match == NULL);
+
+	pf.af = AF_INET;
+	parse_ipv4("8.8.8.0", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 24, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match == NULL);
 
 	// Destroy the subnet activity state.
-	subnet_activity_destroy(&subnet_act);
+	ck_assert_int_eq(subnet_activity_destroy(&subnet_act), SA_OK);
 }
 END_TEST
 

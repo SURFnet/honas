@@ -92,7 +92,7 @@ test_state_agg_src = test_main_src + ['tests/state_aggregation.c', 'src/byte_sli
 test_state_agg_exe = executable('test_state_aggregation', test_state_agg_src, include_directories: inc, build_by_default: false, dependencies: [check_dep, openssl_dep])
 test('state aggregation tests', test_state_agg_exe)
 
-test_subnet_activity_src = test_main_src + ['tests/subnet_activity.c', 'src/subnet_activity.c']
+test_subnet_activity_src = test_main_src + ['tests/subnet_activity.c', 'src/subnet_activity.c', 'src/inet.c', 'src/utils.c']
 test_subnet_activity_exe = executable('test_subnet_activity', test_subnet_activity_src, include_directories: inc, build_by_default: false, dependencies: [check_dep, yajl_dep])
 test('subnet activity tests', test_subnet_activity_exe)
 
