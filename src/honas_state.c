@@ -243,7 +243,7 @@ static void filter_index_host_name_hash_transform(uint32_t filter_index, const b
 	}
 }
 
-void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, struct subnet_activity* subnet_act)
+void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length)
 {
 	/* Check if more than a second has passed since the previous request */
 	if (state->header->last_request < timestamp) {

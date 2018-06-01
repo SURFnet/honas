@@ -77,8 +77,17 @@ struct subnet_activity
 	// The number of prefixes currently registered.
 	size_t registered_prefixes;
 
-	// A hash table of entity-prefix mappings.
-	struct entity_subnet* entity_prefix_mapping;
+	// The shortest IPv4 prefix registered.
+	size_t shortest_ipv4_prefix;
+
+	// The longest IPv4 prefix registered.
+	size_t longest_ipv4_prefix;
+
+	// The shortest IPv6 prefix registered.
+	size_t shortest_ipv6_prefix;
+
+	// The longest IPv6 prefix registered.
+	size_t longest_ipv6_prefix;
 };
 
 // Defines error codes for the subnet activity framework.
@@ -96,13 +105,14 @@ enum subnet_activity_error
 	SA_IPADDRESS_PARSE_FAILED,
 	SA_JSON_SPEC_STRING_FAILED,
 	SA_JSON_SPEC_INTEGER_FAILED,
+	SA_INVALID_PREFIX_LENGTH,
 };
 
 // Loads the subnet activity file and initializes the required logic.
 const enum subnet_activity_error subnet_activity_initialize(const char* subnetfile, struct subnet_activity* p_subact);
 
-// Tests an IP-address to a specific entity. The entity and prefix is returned.
-const enum subnet_activity_error subnet_activity_match_prefix(const struct in_addr46* addr, const unsigned int plen, struct subnet_activity* p_subact, struct prefix_match** const pp_result);
+// Tests an IP-address against all registered prefixes. The longest matching prefix is returned, including the associated entity.
+const enum subnet_activity_error subnet_activity_match_prefix(const struct in_addr46* addr, struct subnet_activity* p_subact, struct prefix_match** const pp_result);
 
 // Destroys and frees the subnet activity structure.
 const enum subnet_activity_error subnet_activity_destroy(struct subnet_activity* p_subact);

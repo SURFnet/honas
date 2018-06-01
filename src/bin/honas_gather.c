@@ -86,9 +86,11 @@ struct capture
         struct event*                   ev_sighup;
 	struct event*			ev_inst_timer;
 	int				remaining_connections;
+	bool				aggregate_subnets;
 	struct subnet_activity		subnet_metadata;
 };
 
+// Global instance of capture context structure.
 struct capture ctx;
 
 struct connection
@@ -366,9 +368,20 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					char* class_str = ldns_rr_class2str(qclass);
 					char* type_str = ldns_rr_type2str(qtype);
 
+					// Check whether subnet aggregation was requested.
+					if (ctx.aggregate_subnets)
+					{
+						// Look up the address in the prefix-entity mapping subsystem.
+						struct prefix_match* match_ptr = NULL;
+						if (subnet_activity_match_prefix(&client, &ctx.subnet_metadata, &match_ptr) != SA_OK)
+						{
+							log_msg(DEBUG, "");
+						}
+					}
+
 					// Store the DNS query in the Bloom filters.
 					log_msg(DEBUG, "Client %s Query: %s, %s for '%s'", str_in_addr(&client), class_str, type_str, hostname);
-					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length, &ctx.subnet_metadata);
+					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length);
 
 					// Update the instrumentation elements.
 					instrumentation_increment_accepted(inst_data);
@@ -1095,12 +1108,11 @@ int main(int argc, char** argv)
 	const char* program_name = "honas-gather";
 	bool daemonize = false;
 	bool syslogenabled = false;
-	bool aggregate_subnets = false;
 
 	/* Parse command line arguments */
 	while (1) {
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "hc:qsvf", long_options, &option_index);
+		int c = getopt_long(argc, argv, "hc:qsvfa", long_options, &option_index);
 		if (c == -1)
 			break;
 
@@ -1139,7 +1151,7 @@ int main(int argc, char** argv)
 			break;
 
 		case 'a':
-			aggregate_subnets = true;
+			ctx.aggregate_subnets = true;
 			break;
 
 		default:
@@ -1218,9 +1230,17 @@ int main(int argc, char** argv)
 	init_instrumentation(ctx.ev_base);
 
 	// Initialize subnet aggregation if requested.
-	if (aggregate_subnets && subnet_activity_initialize(NULL, &ctx.subnet_metadata))
+	if (ctx.aggregate_subnets)
 	{
-
+		// Initialize the subnet aggregation subsystem.
+		if (subnet_activity_initialize(config.subnet_activity_path, &ctx.subnet_metadata) == SA_OK)
+		{
+			log_msg(INFO, "Succesfully initialized the subnet aggregation subsystem!");
+		}
+		else
+		{
+			log_msg(ERR, "Failed to initialize the subnet aggregation subsystem!");
+		}
 	}
 
 	// Allow infinitely many connections.

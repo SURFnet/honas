@@ -76,17 +76,17 @@ START_TEST(test_aggregate_states)
 
 	// Add a few domain names to the first state.
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client
-		, (uint8_t*)"google.com", strlen("google.com"), NULL);
+		, (uint8_t*)"google.com", strlen("google.com"));
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client
-		, (uint8_t*)"surfnet.nl", strlen("surfnet.nl"), NULL);
+		, (uint8_t*)"surfnet.nl", strlen("surfnet.nl"));
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client
-		, (uint8_t*)"unbound.prutsnet.nl", strlen("unbound.prutsnet.nl"), NULL);
+		, (uint8_t*)"unbound.prutsnet.nl", strlen("unbound.prutsnet.nl"));
 
 	// Add a few different domain names to the second state.
 	honas_state_register_host_name_lookup(&second_state, time(NULL), &client
-		, (uint8_t*)"surf.net", strlen("surf.net"), NULL);
+		, (uint8_t*)"surf.net", strlen("surf.net"));
 	honas_state_register_host_name_lookup(&second_state, time(NULL), &client
-		, (uint8_t*)"sidn.nl", strlen("sidn.nl"), NULL);
+		, (uint8_t*)"sidn.nl", strlen("sidn.nl"));
 
 	// Perform a lookup for all added domain names.
 	uint8_t bytes[SHA256_STRING_LENGTH / 2];

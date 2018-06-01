@@ -222,8 +222,7 @@ extern void honas_state_destroy(honas_state_t* state);
  * \param subnet_act       A pointer to a subnet activity structure
  * \ingroup honas_state
  */
-extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name
-	, size_t host_name_length, struct subnet_activity* subnet_act);
+extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length);
 
 /** Check if the host name hash matches possible lookups
  *

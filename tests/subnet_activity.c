@@ -60,51 +60,57 @@ START_TEST(test_subnet_activity)
 
 	// Check if the correct number of registrations took place.
 	ck_assert_int_eq(subnet_act.registered_entities, 2);
-	ck_assert_int_eq(subnet_act.registered_prefixes, 6);
+	ck_assert_int_eq(subnet_act.registered_prefixes, 7);
+
+	// Check the prefix bounds.
+	ck_assert_int_eq(subnet_act.shortest_ipv4_prefix, 8);
+	ck_assert_int_eq(subnet_act.longest_ipv4_prefix, 24);
+	ck_assert_int_eq(subnet_act.longest_ipv6_prefix, 64);
+	ck_assert_int_eq(subnet_act.shortest_ipv6_prefix, 48);
 
 	// Check for the presence of a few subnets that should be present.
 	struct prefix_match* pf_match = NULL;
 	struct in_addr46 pf = { 0 };
 	pf.af = AF_INET;
-	parse_ipv4("192.87.0.0", &pf.in.addr4, 0);
-	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 16, &subnet_act, &pf_match), SA_OK);
+	parse_ipv4("192.87.0.1", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
 	ck_assert(pf_match != NULL);
 	ck_assert_str_eq(pf_match->associated_entity->name, "SURFnet");
 
-	parse_ipv4("145.0.0.0", &pf.in.addr4, 0);
-	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 8, &subnet_act, &pf_match), SA_OK);
+	parse_ipv4("145.0.3.6", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
 	ck_assert(pf_match != NULL);
 	ck_assert_str_eq(pf_match->associated_entity->name, "SURFnet");
 
-	parse_ipv4("192.42.0.0", &pf.in.addr4, 0);
-	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 16, &subnet_act, &pf_match), SA_OK);
-	ck_assert(pf_match != NULL);
-	ck_assert_str_eq(pf_match->associated_entity->name, "SURFnet");
-
-	parse_ipv4("192.42.113.0", &pf.in.addr4, 0);
-	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 24, &subnet_act, &pf_match), SA_OK);
+	parse_ipv4("192.42.113.120", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
 	ck_assert(pf_match != NULL);
 	ck_assert_str_eq(pf_match->associated_entity->name, "netSURF");
 
-	parse_ipv4("145.220.0.0", &pf.in.addr4, 0);
-	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 16, &subnet_act, &pf_match), SA_OK);
+	parse_ipv4("192.42.113.102", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match != NULL);
+	ck_assert_str_eq(pf_match->associated_entity->name, "netSURF");
+
+	parse_ipv4("145.220.20.20", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
 	ck_assert(pf_match != NULL);
 	ck_assert_str_eq(pf_match->associated_entity->name, "netSURF");
 
 	pf.af = AF_INET6;
-	parse_ipv6("2001:67c:6ec::", &pf.in.addr6, 0);
-	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 48, &subnet_act, &pf_match), SA_OK);
+	parse_ipv6("2001:67c:6ec:201:145:220:0:1", &pf.in.addr6, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
 	ck_assert(pf_match != NULL);
 	ck_assert_str_eq(pf_match->associated_entity->name, "netSURF");
 
 	// Check for prefixes that should not exist.
-	parse_ipv6("2001:678:230::", &pf.in.addr6, 0);
-	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 48, &subnet_act, &pf_match), SA_OK);
+	parse_ipv6("2001:678:230:2123:192:42:123:139", &pf.in.addr6, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
 	ck_assert(pf_match == NULL);
 
 	pf.af = AF_INET;
-	parse_ipv4("8.8.8.0", &pf.in.addr4, 0);
-	ck_assert_int_eq(subnet_activity_match_prefix(&pf, 24, &subnet_act, &pf_match), SA_OK);
+	parse_ipv4("8.8.8.8", &pf.in.addr4, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
 	ck_assert(pf_match == NULL);
 
 	// Destroy the subnet activity state.
