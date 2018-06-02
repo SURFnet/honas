@@ -260,6 +260,6 @@ extern const bool honas_state_aggregate_combine(honas_state_t* target, honas_sta
  * Takes a state as input and gives an integer value as output, representing
  * the number of bits entropy required for a Bloom filter.
  */
-extern const uint32_t honas_calculate_required_entropy(honas_state_t* state);
+extern const uint32_t honas_state_calculate_required_entropy(honas_state_t* state);
 
 #endif /* HONAS_STATE_H */

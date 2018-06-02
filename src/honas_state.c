@@ -462,7 +462,7 @@ const bool honas_state_aggregate_combine(honas_state_t* target, honas_state_t* s
 }
 
 // Calculates minimum required bits of entropy for a Bloom filter.
-const uint32_t honas_calculate_required_entropy(honas_state_t* state)
+const uint32_t honas_state_calculate_required_entropy(honas_state_t* state)
 {
 	if (state)
 	{

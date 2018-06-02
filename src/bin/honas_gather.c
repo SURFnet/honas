@@ -1208,6 +1208,13 @@ int main(int argc, char** argv)
 		create_state(&config, &current_active_state, time(NULL));
 	}
 
+	// Log a warning about the filter size if applicable.
+	const uint32_t req_entropy = honas_state_calculate_required_entropy(&current_active_state);
+	if (req_entropy > 512) // Maximum we can use is SHA-512!
+	{
+		log_msg(WARN, "The required entropy for the current filter size is %i, which is larger than SHA-512 can offer!");
+	}
+
 	// Initialize the DNStap input feature.
 	if (!init_dnstap_input())
 	{
