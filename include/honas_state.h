@@ -255,4 +255,11 @@ extern void honas_state_persist(honas_state_t* state, const char* filename, bool
  */
 extern const bool honas_state_aggregate_combine(honas_state_t* target, honas_state_t* source);
 
+/** Calculates the minimum required bits of entropy for a given filter size and number of hash functions.
+ *
+ * Takes a state as input and gives an integer value as output, representing
+ * the number of bits entropy required for a Bloom filter.
+ */
+extern const uint32_t honas_calculate_required_entropy(honas_state_t* state);
+
 #endif /* HONAS_STATE_H */

@@ -54,7 +54,7 @@
 #define CONTENT_TYPE		"protobuf:dnstap.Dnstap"
 #define CAPTURE_HIGH_WATERMARK	262144
 #define HONAS_INSTRUMENTATION	"/var/spool/honas/instrumentation.log"
-#define HONAS_SUBNET_FILE	"/var/spool/honas/subnet_activity.json"
+#define HONAS_SUBNET_FILE	"/etc/honas/subnet_activity.json"
 
 static const char active_state_file_name[] = "active_state";
 static honas_state_t current_active_state;
@@ -375,7 +375,7 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 						struct prefix_match* match_ptr = NULL;
 						if (subnet_activity_match_prefix(&client, &ctx.subnet_metadata, &match_ptr) != SA_OK)
 						{
-							log_msg(DEBUG, "");
+							log_msg(DEBUG, "Query found for entity %s, prefix %s/%i", match_ptr->associated_entity->name, str_in_addr(&match_ptr->prefix.address), match_ptr->prefix.length);
 						}
 					}
 

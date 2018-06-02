@@ -460,3 +460,16 @@ const bool honas_state_aggregate_combine(honas_state_t* target, honas_state_t* s
 	// The pointers are invalid.
 	return false;
 }
+
+// Calculates minimum required bits of entropy for a Bloom filter.
+const uint32_t honas_calculate_required_entropy(honas_state_t* state)
+{
+	if (state)
+	{
+		// Calculated with k * ceil(log_2(m)).
+		return state->header->number_of_hashes * ceil(log2(state->header->number_of_bits_per_filter));
+	}
+
+	// Invalid state parameter specified.
+	return 0;
+}

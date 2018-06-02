@@ -452,6 +452,9 @@ const enum subnet_activity_error subnet_activity_match_prefix(const struct in_ad
 		return SA_INVALID_ARGUMENT;
 	}
 
+	// Set the output prefix_match pointer to NULL to mitigate caller mistakes.
+	*pp_result = NULL;
+
 	// Generate matching prefix combinations from long to short until the longest is found.
 	// If none is found after all possible prefixes are generated, no matching prefix is
 	// registered.
@@ -466,8 +469,6 @@ const enum subnet_activity_error subnet_activity_match_prefix(const struct in_ad
 			// Check whether prefix with length i is present in the hash table.
 			p.address.in.addr4.s_addr = addr->in.addr4.s_addr & all_ipv4_subnet_masks[i];
 			p.length = i;
-
-			printf("IPv4 address generated: %s/%i\n", str_in_addr(&p.address), i);
 
 			// Find prefix by hash.
 			HASH_FIND(hh, p_subact->prefixes, &p, sizeof(struct prefix), entry);
@@ -486,14 +487,8 @@ const enum subnet_activity_error subnet_activity_match_prefix(const struct in_ad
 			// Perform bitwise AND for all 16 bytes of the IPv6 address.
 			for (unsigned int j = 0; j < 16; ++j)
 			{
-				if (i == 0)
-				{
-					printf("lole\n");
-				}
 				p.address.in.addr6.s6_addr[j] = addr->in.addr6.s6_addr[j] & all_ipv6_subnet_masks[i - 1].s6_addr[j];
 			}
-
-			printf("IPv6 address generated: %s/%i\n", str_in_addr(&p.address), i);
 
 			// Check whether prefix with length i is present in the hash table.
 			p.length = i;

@@ -108,6 +108,10 @@ START_TEST(test_subnet_activity)
 	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
 	ck_assert(pf_match == NULL);
 
+	parse_ipv6("2001:610:510:123:192:42:123:139", &pf.in.addr6, 0);
+	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
+	ck_assert(pf_match == NULL);
+
 	pf.af = AF_INET;
 	parse_ipv4("8.8.8.8", &pf.in.addr4, 0);
 	ck_assert_int_eq(subnet_activity_match_prefix(&pf, &subnet_act, &pf_match), SA_OK);
