@@ -88,6 +88,9 @@ struct capture
 	int				remaining_connections;
 	bool				aggregate_subnets;
 	struct subnet_activity		subnet_metadata;
+	bool				dry_run;
+	struct event*			ev_dry_run_hourly;
+	struct event*			ev_dry_run_daily;
 };
 
 // Global instance of capture context structure.
@@ -362,11 +365,8 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 				// Also, only queries for the A, NS, MX, AAAA record types are accepted.
 				if (qname && qclass == LDNS_RR_CLASS_IN && query_is_valid_dns_type(qtype))
 				{
-					// Convert all data accordingly.
-					char* hostname = ldns_rdf2str(qname);
-					const size_t hostname_length = strlen(hostname);
-					char* class_str = ldns_rr_class2str(qclass);
-					char* type_str = ldns_rr_type2str(qtype);
+					// Create a buffer for the hostname, including space for a possible entity name.
+					char hn_buf[384];
 
 					// Check whether subnet aggregation was requested.
 					if (ctx.aggregate_subnets)
@@ -375,13 +375,35 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 						struct prefix_match* match_ptr = NULL;
 						if (subnet_activity_match_prefix(&client, &ctx.subnet_metadata, &match_ptr) != SA_OK)
 						{
+							strncpy(hn_buf, match_ptr->associated_entity->name, sizeof(match_ptr->associated_entity->name));
 							log_msg(DEBUG, "Query found for entity %s, prefix %s/%i", match_ptr->associated_entity->name, str_in_addr(&match_ptr->prefix.address), match_ptr->prefix.length);
 						}
 					}
 
+					// Convert all DNS query data accordingly.
+					char* hostname = ldns_rdf2str(qname);
+					strncat(hn_buf, hostname, sizeof(hn_buf) - strlen(hn_buf));
+					const size_t hostname_length = strlen(hn_buf);
+					char* class_str = ldns_rr_class2str(qclass);
+					char* type_str = ldns_rr_type2str(qtype);
+
 					// Store the DNS query in the Bloom filters.
 					log_msg(DEBUG, "Client %s Query: %s, %s for '%s'", str_in_addr(&client), class_str, type_str, hostname);
-					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length);
+					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hn_buf, hostname_length);
+
+					// Calculate the actual false positive rate, and check whether it is still acceptable.
+					for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)
+					{
+						const uint32_t bits_set = current_active_state.filter_bits_set[i];
+						const double fill_rate = (double)bits_set / (double)current_active_state.header->number_of_bits_per_filter;
+						const double act_fpr = pow(fill_rate, (double)current_active_state.header->number_of_hashes);
+
+						// Does the false positive rate of this filter exceed the threshold?
+						if (act_fpr > 0.001)
+						{
+							log_msg(WARN, "The actual false positive rate %f of filter %i exceeds the threshold %f!", act_fpr, i, 0.001);
+						}
+					}
 
 					// Update the instrumentation elements.
 					instrumentation_increment_accepted(inst_data);
@@ -1025,6 +1047,7 @@ static void show_usage(const char* program_name, FILE* out)
 	fprintf(out, "  -v|--verbose        Be more verbose (can be used multiple times)\n");
 	fprintf(out, "  -f|--fork           Fork the process as daemon (syslog must be enabled)\n");
 	fprintf(out, "  -a|--aggregate      Aggregates queries by subnet per filter (predefined subnets)\n");
+	fprintf(out, "  -d|--dry-run        Performs measurements and gives advice about Bloom filter configuration\n");
 }
 
 static const struct option long_options[] = {
@@ -1035,6 +1058,7 @@ static const struct option long_options[] = {
 	{ "verbose", no_argument, 0, 'v' },
 	{ "fork", no_argument, 0, 'f' },
 	{ "aggregate", no_argument, 0, 'a' },
+	{ "dry-run", no_argument, 0, 'd' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -1103,6 +1127,48 @@ static void init_instrumentation(struct event_base* base)
 	}
 }
 
+// Destroys dry run features.
+static void dry_run_destroy()
+{
+	// Destroy the hourly timer event.
+	if (ctx.ev_dry_run_hourly)
+	{
+		event_free(ctx.ev_dry_run_hourly);
+	}
+
+	// Destroy the daily timer event.
+	if (ctx.ev_dry_run_daily)
+	{
+		event_free(ctx.ev_dry_run_daily);
+	}
+}
+
+// The dry run instrumentation event function for hourly dumps.
+static void dry_run_hourly_event(evutil_socket_t fd, short what, void *arg)
+{
+
+}
+
+// The dry run instrumentation event function for daily dumps.
+static void dry_run_daily_event(evutil_socket_t fd, short what, void *arg)
+{
+
+}
+
+// Adds periodic events for the dumping of dry-run instrumentation data.
+static void init_dry_run_dumps(struct event_base* base)
+{
+	// Add dry run instrumentation event for hourly dumps.
+	struct timeval hourly = { 3600, 0 };
+	ctx.ev_dry_run_hourly = event_new(base, -1, EV_PERSIST, dry_run_hourly_event, &current_active_state);
+	event_add(ctx.ev_dry_run_hourly, &hourly);
+
+	// Add dry run instrumentation event for daily dumps.
+	struct timeval daily = { 86400, 0 };
+	ctx.ev_dry_run_hourly = event_new(base, -1, EV_PERSIST, dry_run_daily_event, &current_active_state);
+	event_add(ctx.ev_dry_run_daily, &daily);
+}
+
 int main(int argc, char** argv)
 {
 	const char* program_name = "honas-gather";
@@ -1112,7 +1178,7 @@ int main(int argc, char** argv)
 	/* Parse command line arguments */
 	while (1) {
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "hc:qsvfa", long_options, &option_index);
+		int c = getopt_long(argc, argv, "hc:qsvfad", long_options, &option_index);
 		if (c == -1)
 			break;
 
@@ -1152,6 +1218,10 @@ int main(int argc, char** argv)
 
 		case 'a':
 			ctx.aggregate_subnets = true;
+			break;
+
+		case 'd':
+			ctx.dry_run = true;
 			break;
 
 		default:
@@ -1202,6 +1272,14 @@ int main(int argc, char** argv)
 	honas_gather_config_init(&config);
 	load_gather_config(&config, init_dirfd, config_file);
 	honas_gather_config_finalize(&config);
+
+	// Performing dry-run to measure and advise operator about parameters.
+	if (ctx.dry_run)
+	{
+		// Initialize dry run features.
+		init_dry_run_dumps(ctx.ev_base);
+		log_msg(INFO, "Performing dry-run: measuring data and giving advice about Bloom filter configuration.");
+	}
 
 	/* Open or create honas state for this period */
 	if (!try_open_active_state(&current_active_state)) {
@@ -1287,6 +1365,9 @@ int main(int argc, char** argv)
 
 	// Clean up and finalize instrumentation.
 	finalize_instrumentation();
+
+	// Clean up and finalize dry run features.
+	dry_run_destroy();
 
 	/* Destroy previously initialized data */
 	honas_gather_config_destroy(&config);
