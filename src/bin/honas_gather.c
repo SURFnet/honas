@@ -1286,7 +1286,8 @@ static void dry_run_advice()
 
 	fprintf(dryrun_fd, "------------------------------------ Advice ------------------------------------\n");
 	fprintf(dryrun_fd, "-------------------------------- Hourly Filters --------------------------------\n");
-	const time_t rounded_hour = time(NULL) % 3600;
+	time_t rounded_hour = time(NULL);
+	rounded_hour %= 3600;
 	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&rounded_hour));
 
 	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
@@ -1308,7 +1309,8 @@ static void dry_run_advice()
 	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
 
 	fprintf(dryrun_fd, "-------------------------------- Daily Filters ---------------------------------\n");
-	const time_t rounded_day = time(NULL) % 86400;
+	time_t rounded_day = time(NULL);
+	rounded_day %= 86400;
 	strftime(date_str, sizeof(date_str), "%d-%m-%Y", localtime(&rounded_day));
 
 	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
