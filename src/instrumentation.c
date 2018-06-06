@@ -102,10 +102,12 @@ void instrumentation_dump(struct instrumentation* p_inst, char* const out_str, c
 		p_inst->memory_usage_kb = r_usage.ru_maxrss;
 
 		// Dump the instrumentation data to a structured single-line string.
-		snprintf(out_str, str_length, "Instrumentation: n_proc=%zu,n_acc=%zu,n_skip=%zu,n_qsec=%zu,n_qa=%zu,n_qaaaa=%zu,n_qns=%zu,n_qmx=%zu,mem_usg_kb=%zu\n"
+		snprintf(out_str, str_length, "Instrumentation: n_proc=%zu,n_acc=%zu,n_skip=%zu,n_qsec=%zu,n_qa=%zu,n_qaaaa=%zu,n_qns=%zu,n_qmx=%zu,mem_usg_kb=%zu,n_qcat=%zu,n_qncat=%zu,n_invfrm=%zu\n"
 			, p_inst->n_processed_queries, p_inst->n_accepted_queries, p_inst->n_skipped_queries
 			, p_inst->n_queries_sec, p_inst->n_a_queries, p_inst->n_aaaa_queries
-			, p_inst->n_ns_queries, p_inst->n_mx_queries, p_inst->memory_usage_kb);
+			, p_inst->n_ns_queries, p_inst->n_mx_queries, p_inst->memory_usage_kb
+			, p_inst->subnet_aggregates.n_queries_in_subnet, p_inst->subnet_aggregates.n_queries_not_in_subnet
+			, p_inst->n_invalid_frames);
 	}
 }
 
@@ -122,6 +124,9 @@ void instrumentation_reset(struct instrumentation* p_inst)
 		p_inst->n_aaaa_queries = 0;
 		p_inst->n_ns_queries = 0;
 		p_inst->n_mx_queries = 0;
+		p_inst->subnet_aggregates.n_queries_in_subnet = 0;
+		p_inst->subnet_aggregates.n_queries_not_in_subnet = 0;
+		p_inst->n_invalid_frames = 0;
 	}
 }
 
@@ -151,7 +156,20 @@ void instrumentation_destroy(struct instrumentation* p_inst)
 }
 
 // Updates the subnet activity data structure.
-void instrumentation_update_subnet_activity(struct subnet_instrumentation* p_subinst)
+void instrumentation_update_subnet_activity(struct instrumentation* p_inst, const size_t in, const size_t not_in)
 {
+	if (p_inst)
+	{
+		p_inst->subnet_aggregates.n_queries_in_subnet += in;
+		p_inst->subnet_aggregates.n_queries_not_in_subnet += not_in;
+	}
+}
 
+// Increments the number of invalid frames received by the listener.
+void instrumentation_increment_invalid(struct instrumentation* p_inst)
+{
+	if (p_inst)
+	{
+		++p_inst->n_invalid_frames;
+	}
 }

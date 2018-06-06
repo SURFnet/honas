@@ -43,7 +43,7 @@ ldns_dep = dependency('libldns')
 
 honas_src = ['src/honas_state.c', 'src/bloom.c', 'src/byte_slice.c', 'src/hyperloglog.c', 'src/combinations.c', 'src/logging.c']
 
-gather_src = honas_src + ['src/bin/honas_gather.c']
+gather_src = honas_src + ['src/bin/honas_gather.c', 'src/advice.c']
 gather_src += ['src/honas_gather_config.c', 'src/utils.c', 'src/config.c', 'src/read_file.c', 'src/inet.c', 'src/utils.c']
 gather_src += ['src/inet.c', 'src/utils.c', 'src/dnstap.pb/dnstap.pb-c.c', 'src/instrumentation.c', 'src/subnet_activity.c']
 executable('honas-gather', gather_src, include_directories: inc, install: true, dependencies: [m_dep, openssl_dep, libevent_dep, fstrm_dep, protobuf_dep, ldns_dep, yajl_dep])

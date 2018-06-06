@@ -36,6 +36,7 @@
 #include "honas_state.h"
 #include "instrumentation.h"
 #include "subnet_activity.h"
+#include "advice.h"
 
 #include <sys/un.h>
 
@@ -55,6 +56,7 @@
 #define CAPTURE_HIGH_WATERMARK	262144
 #define HONAS_INSTRUMENTATION	"/var/spool/honas/instrumentation.log"
 #define HONAS_SUBNET_FILE	"/etc/honas/subnet_activity.json"
+#define HONAS_DRYRUNFILE	"/var/spool/honas/dry_run.log"
 
 static const char active_state_file_name[] = "active_state";
 static honas_state_t current_active_state;
@@ -64,9 +66,15 @@ static honas_gather_config_t config = { 0 };
 static int init_dirfd = 0;
 static char* config_file = DEFAULT_HONAS_GATHER_CONFIG_PATH;
 static FILE* inst_fd = NULL;
+static FILE* dryrun_fd = NULL;
 
 // Structure keeping track of the instrumentation information.
 struct instrumentation* inst_data;
+
+#ifndef max
+#define max(a,b) (((a) > (b)) ? (a) : (b))
+#define min(a,b) (((a) < (b)) ? (a) : (b))
+#endif
 
 // --------------------------------------------------------------------------------------------------------
 
@@ -78,12 +86,25 @@ typedef enum
 	CONN_STATE_STOPPED,
 } conn_state;
 
+// Contains dry run counters.
+struct dry_run_counters
+{
+	hll				hourly_global;
+	hll				daily_global;
+	unsigned long long		hourly_total_queries;
+	unsigned long long		daily_total_queries;
+
+	// Maximum numbers that will be used to give an advice.
+	unsigned long long		hourly_maximum;
+	unsigned long long		daily_maximum;
+};
+
+// The Honas gather program context.
 struct capture
 {
         struct sockaddr_un              addr;
         struct event_base*              ev_base;
         struct evconnlistener*          ev_connlistener;
-        struct event*                   ev_sighup;
 	struct event*			ev_inst_timer;
 	int				remaining_connections;
 	bool				aggregate_subnets;
@@ -91,11 +112,13 @@ struct capture
 	bool				dry_run;
 	struct event*			ev_dry_run_hourly;
 	struct event*			ev_dry_run_daily;
+	struct dry_run_counters		dry_run_data;
 };
 
 // Global instance of capture context structure.
 struct capture ctx;
 
+// The context structure for a new connection.
 struct connection
 {
         struct capture*			context;
@@ -137,6 +160,13 @@ static bool query_is_valid_dns_type(const ldns_rr_type qtype)
 
 	return false;
 }
+
+// Gets a fast 64-bit hash from a byte slice of data.
+static uint64_t uint64_hash(const byte_slice_t data)
+{
+	return byte_slice_MurmurHash64A(data, 0xadc83b19ULL);
+}
+
 
 // --------------------------------------------------------------------------------------------------------
 
@@ -285,7 +315,7 @@ static bool can_read_full_frame(struct connection* conn)
 	 */
 	if (conn->len_buf < conn->len_frame_total)
 	{
-		log_msg(WARN, "Incomplete message (have %zd bytes, want %u)",  conn->len_buf, conn->len_frame_total);
+		log_msg(DEBUG, "Incomplete message (have %zd bytes, want %u)",  conn->len_buf, conn->len_frame_total);
 		if (conn->len_frame_total > CAPTURE_HIGH_WATERMARK)
 		{
 			log_msg(DEBUG, "Skipping %zu byte message (%zu buffer)!", conn->len_frame_total, CAPTURE_HIGH_WATERMARK);
@@ -366,18 +396,29 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 				if (qname && qclass == LDNS_RR_CLASS_IN && query_is_valid_dns_type(qtype))
 				{
 					// Create a buffer for the hostname, including space for a possible entity name.
-					char hn_buf[384];
+					char hn_buf[384] = { 0 };
 
 					// Check whether subnet aggregation was requested.
 					if (ctx.aggregate_subnets)
 					{
+						// Provide instrumentation data for subnet activity.
+						size_t in = 0, notin = 0;
+
 						// Look up the address in the prefix-entity mapping subsystem.
 						struct prefix_match* match_ptr = NULL;
-						if (subnet_activity_match_prefix(&client, &ctx.subnet_metadata, &match_ptr) != SA_OK)
+						if (subnet_activity_match_prefix(&client, &ctx.subnet_metadata, &match_ptr) == SA_OK && match_ptr)
 						{
 							strncpy(hn_buf, match_ptr->associated_entity->name, sizeof(match_ptr->associated_entity->name));
-							log_msg(DEBUG, "Query found for entity %s, prefix %s/%i", match_ptr->associated_entity->name, str_in_addr(&match_ptr->prefix.address), match_ptr->prefix.length);
+							hn_buf[min(strlen(hn_buf), sizeof(hn_buf) - 2)] = '.';
+							in = 1;
 						}
+						else
+						{
+							notin = 1;
+						}
+
+						// Update instrumentation statistics.
+						instrumentation_update_subnet_activity(inst_data, in, notin);
 					}
 
 					// Convert all DNS query data accordingly.
@@ -387,21 +428,40 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					char* class_str = ldns_rr_class2str(qclass);
 					char* type_str = ldns_rr_type2str(qtype);
 
-					// Store the DNS query in the Bloom filters.
-					log_msg(DEBUG, "Client %s Query: %s, %s for '%s'", str_in_addr(&client), class_str, type_str, hostname);
-					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hn_buf, hostname_length);
-
-					// Calculate the actual false positive rate, and check whether it is still acceptable.
-					for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)
+					// Check if we are in dry run mode or not.
+					if (ctx.dry_run)
 					{
-						const uint32_t bits_set = current_active_state.filter_bits_set[i];
-						const double fill_rate = (double)bits_set / (double)current_active_state.header->number_of_bits_per_filter;
-						const double act_fpr = pow(fill_rate, (double)current_active_state.header->number_of_hashes);
-
-						// Does the false positive rate of this filter exceed the threshold?
-						if (act_fpr > 0.001)
+						// Separate all labels from the domain name, except the TLD.
+						uint8_t *part_start = (uint8_t*)hn_buf, *part_end = (uint8_t*)hn_buf + hostname_length, *part_next;
+						while ((part_next = memchr(part_start, '.', part_end - part_start)) != NULL)
 						{
-							log_msg(WARN, "The actual false positive rate %f of filter %i exceeds the threshold %f!", act_fpr, i, 0.001);
+							// Add the label to the HyperLogLog counters.
+							hllAdd(&ctx.dry_run_data.hourly_global, uint64_hash(byte_slice(part_start, part_end - part_start)));
+							hllAdd(&ctx.dry_run_data.daily_global, uint64_hash(byte_slice(part_start, part_end - part_start)));
+							part_start = part_next + 1; /* +1 as the next part actually starts after the '.' */
+						}
+
+						// Update total query counters.
+						++ctx.dry_run_data.hourly_total_queries;
+						++ctx.dry_run_data.daily_total_queries;
+					}
+					else
+					{
+						// Store the DNS query in the Bloom filters.
+						honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hn_buf, hostname_length);
+
+						// Calculate the actual false positive rate, and check whether it is still acceptable.
+						for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)
+						{
+							const uint32_t bits_set = current_active_state.filter_bits_set[i];
+							const double fill_rate = (double)bits_set / (double)current_active_state.header->number_of_bits_per_filter;
+							const double act_fpr = pow(fill_rate, (double)current_active_state.header->number_of_hashes);
+
+							// Does the false positive rate of this filter exceed the threshold?
+							if (act_fpr > 0.001)
+							{
+								log_msg(WARN, "The actual false positive rate %f of filter %i exceeds the threshold %f!", act_fpr, i, 0.001);
+							}
 						}
 					}
 
@@ -493,21 +553,21 @@ static void process_data_frame(struct connection* conn)
 
 	// Decode the frame as DNStap.
 	Dnstap__Dnstap *d = dnstap__dnstap__unpack(NULL, bytes_read, buf);
-	if (!d)
-	{
-		log_msg(ERR, "Failed to unpack the frame into DNStap data!");
-	}
-
-	// Try to decode the DNStap message.
-	if (!decode_dnstap_message(d->message))
-	{
-		log_msg(ERR, "Failed to decode the DNStap message!");
-	}
-
-	// Clean up protobuf allocated structures.
 	if (d)
 	{
+		// Try to decode the DNStap message.
+		if (!decode_dnstap_message(d->message))
+		{
+			log_msg(ERR, "Failed to decode the DNStap message!");
+			instrumentation_increment_invalid(inst_data);
+		}
+
+		// Clean up protobuf allocated structures.
 		dnstap__dnstap__free_unpacked(d, NULL);
+	}
+	else
+	{
+		log_msg(DEBUG, "Failed to unpack the frame into DNStap data!");
 	}
 
 	/* Accounting. */
@@ -1130,6 +1190,10 @@ static void init_instrumentation(struct event_base* base)
 // Destroys dry run features.
 static void dry_run_destroy()
 {
+	// Destroy HyperLogLog structures.
+	hllDestroy(&ctx.dry_run_data.hourly_global);
+	hllDestroy(&ctx.dry_run_data.daily_global);
+
 	// Destroy the hourly timer event.
 	if (ctx.ev_dry_run_hourly)
 	{
@@ -1141,39 +1205,134 @@ static void dry_run_destroy()
 	{
 		event_free(ctx.ev_dry_run_daily);
 	}
+
+	// Close the dry run output file.
+	if (dryrun_fd)
+	{
+		fclose(dryrun_fd);
+	}
 }
 
 // The dry run instrumentation event function for hourly dumps.
 static void dry_run_hourly_event(evutil_socket_t fd, short what, void *arg)
 {
+	struct dry_run_counters* data = (struct dry_run_counters*)arg;
 
+	// Write the hourly dry run statistics to the output file.
+	const unsigned long long current = hllCount(&data->hourly_global, NULL);
+	fprintf(dryrun_fd, "Distinct count this hour: %llu, total query count: %llu\n", current, data->hourly_total_queries);
+	fflush(dryrun_fd);
+
+	// Set maximum if necessary.
+	data->hourly_maximum = max(data->hourly_maximum, current);
+
+	// Reinitialize the HyperLogLog counter.
+	hllDestroy(&data->hourly_global);
+	hllInit(&data->hourly_global);
+	data->hourly_total_queries = 0;
 }
 
 // The dry run instrumentation event function for daily dumps.
 static void dry_run_daily_event(evutil_socket_t fd, short what, void *arg)
 {
+	struct dry_run_counters* data = (struct dry_run_counters*)arg;
 
+	// Write the hourly dry run statistics to the output file.
+	const unsigned long long current = hllCount(&data->daily_global, NULL);
+	fprintf(dryrun_fd, "Distinct count this day: %llu, total query count: %llu\n", current, data->daily_total_queries);
+	fflush(dryrun_fd);
+
+	// Set maximum if necessary.
+	data->daily_maximum = max(data->daily_maximum, current);
+
+	// Reinitialize the HyperLogLog counter.
+	hllDestroy(&data->daily_global);
+	hllInit(&data->daily_global);
+	data->daily_total_queries = 0;
 }
 
 // Adds periodic events for the dumping of dry-run instrumentation data.
 static void init_dry_run_dumps(struct event_base* base)
 {
+	// Open the dry run output file.
+	dryrun_fd = fopen(HONAS_DRYRUNFILE, "ab");
+	if (!dryrun_fd)
+	{
+		log_msg(ERR, "Failed to initialize dry-run output file! No information will be logged.");
+		return;
+	}
+
 	// Add dry run instrumentation event for hourly dumps.
-	struct timeval hourly = { 3600, 0 };
-	ctx.ev_dry_run_hourly = event_new(base, -1, EV_PERSIST, dry_run_hourly_event, &current_active_state);
+	struct timeval hourly = { 3660, 0 };
+	ctx.ev_dry_run_hourly = event_new(base, -1, EV_PERSIST, dry_run_hourly_event, &ctx.dry_run_data);
 	event_add(ctx.ev_dry_run_hourly, &hourly);
 
 	// Add dry run instrumentation event for daily dumps.
 	struct timeval daily = { 86400, 0 };
-	ctx.ev_dry_run_hourly = event_new(base, -1, EV_PERSIST, dry_run_daily_event, &current_active_state);
+	ctx.ev_dry_run_daily = event_new(base, -1, EV_PERSIST, dry_run_daily_event, &ctx.dry_run_data);
 	event_add(ctx.ev_dry_run_daily, &daily);
+
+	// Initialize HyperLogLog counters.
+	hllInit(&ctx.dry_run_data.hourly_global);
+	hllInit(&ctx.dry_run_data.daily_global);
 }
 
+// Gives advice based on the information collected in a dry run.
+static void dry_run_advice()
+{
+	fprintf(dryrun_fd, "------------------------------------ Advice ------------------------------------\n");
+	fprintf(dryrun_fd, "-------------------------------- Hourly Filters --------------------------------\n");
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
+	unsigned long m = bloom_filter_size((double)1 / (double)1000, ctx.dry_run_data.hourly_maximum);
+	unsigned long k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
+	fprintf(dryrun_fd, "For a false positive rate of 1 / 1000, Bloom filter size (m) should be %lu, based on %llu distinct domain names\n", m, ctx.dry_run_data.hourly_maximum);
+	fprintf(dryrun_fd, "The number of hash functions (k) should be %lu\n", k);
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/10000.
+	m = bloom_filter_size((double)1 / (double)10000, ctx.dry_run_data.hourly_maximum);
+	k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
+	fprintf(dryrun_fd, "For a false positive rate of 1 / 10000, Bloom filter size (m) should be %lu, based on %llu distinct domain names\n", m, ctx.dry_run_data.hourly_maximum);
+	fprintf(dryrun_fd, "The number of hash functions (k) should be %lu\n", k);
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/100000.
+	m = bloom_filter_size((double)1 / (double)100000, ctx.dry_run_data.hourly_maximum);
+	k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
+	fprintf(dryrun_fd, "For a false positive rate of 1 / 100000, Bloom filter size (m) should be %lu, based on %llu distinct domain names\n", m, ctx.dry_run_data.hourly_maximum);
+	fprintf(dryrun_fd, "The number of hash functions (k) should be %lu\n", k);
+
+	fprintf(dryrun_fd, "-------------------------------- Daily Filters ---------------------------------\n");
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
+	m = bloom_filter_size((double)1 / (double)1000, ctx.dry_run_data.daily_maximum);
+	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
+	fprintf(dryrun_fd, "For a false positive rate of 1 / 1000, Bloom filter size (m) should be %lu, based on %llu distinct domain names\n", m, ctx.dry_run_data.daily_maximum);
+	fprintf(dryrun_fd, "The number of hash functions (k) should be %lu\n", k);
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/10000.
+	m = bloom_filter_size((double)1 / (double)10000, ctx.dry_run_data.daily_maximum);
+	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
+	fprintf(dryrun_fd, "For a false positive rate of 1 / 10000, Bloom filter size (m) should be %lu, based on %llu distinct domain names\n", m, ctx.dry_run_data.daily_maximum);
+	fprintf(dryrun_fd, "The number of hash functions (k) should be %lu\n", k);
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/100000.
+	m = bloom_filter_size((double)1 / (double)100000, ctx.dry_run_data.daily_maximum);
+	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
+	fprintf(dryrun_fd, "For a false positive rate of 1 / 100000, Bloom filter size (m) should be %lu, based on %llu distinct domain names\n", m, ctx.dry_run_data.daily_maximum);
+	fprintf(dryrun_fd, "The number of hash functions (k) should be %lu\n", k);
+
+	fprintf(dryrun_fd, "-------------------------------------- End -------------------------------------\n");
+}
+
+// The Honas gather entrypoint.
 int main(int argc, char** argv)
 {
 	const char* program_name = "honas-gather";
 	bool daemonize = false;
 	bool syslogenabled = false;
+
+	// Set entire capture context initially to zero.
+	memset(&ctx, 0, sizeof(struct capture));
 
 	/* Parse command line arguments */
 	while (1) {
@@ -1273,14 +1432,6 @@ int main(int argc, char** argv)
 	load_gather_config(&config, init_dirfd, config_file);
 	honas_gather_config_finalize(&config);
 
-	// Performing dry-run to measure and advise operator about parameters.
-	if (ctx.dry_run)
-	{
-		// Initialize dry run features.
-		init_dry_run_dumps(ctx.ev_base);
-		log_msg(INFO, "Performing dry-run: measuring data and giving advice about Bloom filter configuration.");
-	}
-
 	/* Open or create honas state for this period */
 	if (!try_open_active_state(&current_active_state)) {
 		create_state(&config, &current_active_state, time(NULL));
@@ -1328,6 +1479,14 @@ int main(int argc, char** argv)
 		}
 	}
 
+	// Performing dry-run to measure and advise operator about parameters.
+	if (ctx.dry_run)
+	{
+		// Initialize dry run features.
+		init_dry_run_dumps(ctx.ev_base);
+		log_msg(INFO, "Performing dry-run: measuring data and giving advice about Bloom filter configuration.");
+	}
+
 	// Allow infinitely many connections.
 	ctx.remaining_connections = -1;
 
@@ -1346,11 +1505,27 @@ int main(int argc, char** argv)
 	log_msg(INFO, "Unlinking socket file %s...", UNIX_SOCKET_PATH);
 	unlink(UNIX_SOCKET_PATH);
 
-	// Clean up libevent resources.
-	if (ctx.ev_sighup != NULL)
+	// Clean up and finalize instrumentation.
+	finalize_instrumentation();
+
+	// If a dry run was performed, provide advice about the parameters for Bloom filters.
+	if (ctx.dry_run)
 	{
-		event_free(ctx.ev_sighup);
+		// Calculate parameters k and m, based on the maximum hourly and daily distinct domain names.
+		// Give advice on the parameters for three possible false positive rates.
+		dry_run_advice();
+
+		// Clean up and finalize dry run features.
+		dry_run_destroy();
 	}
+
+	// Clean up the subnet activity resources if necessary.
+	if (ctx.aggregate_subnets && subnet_activity_destroy(&ctx.subnet_metadata) == SA_OK)
+	{
+		log_msg(INFO, "Finalized subnet activity resources.");
+	}
+
+	// Clean up libevent resources.
 	if (ctx.ev_connlistener != NULL)
 	{
 		evconnlistener_free(ctx.ev_connlistener);
@@ -1362,12 +1537,6 @@ int main(int argc, char** argv)
 
 	/* Clean shutdown; persist active current state */
 	close_state(&current_active_state);
-
-	// Clean up and finalize instrumentation.
-	finalize_instrumentation();
-
-	// Clean up and finalize dry run features.
-	dry_run_destroy();
 
 	/* Destroy previously initialized data */
 	honas_gather_config_destroy(&config);

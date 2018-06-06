@@ -39,11 +39,11 @@
 // subnet activity in Honas.
 struct subnet_instrumentation
 {
-	// Specifies the number of subnets for which queries were received.
-	size_t				n_queried_subnets;
+	// Specifies the number of queries that were categorized in a subnet.
+	size_t				n_queries_in_subnet;
 
-	// Specifies the number of predefined subnets for which no queries were received.
-	size_t				n_not_queried_subnets;
+	// Specifies the number of queries that were not categorized in a subnet.
+	size_t				n_queries_not_in_subnet;
 };
 
 // The instrumentation data structure that will be written to a file periodically.
@@ -78,6 +78,9 @@ struct instrumentation
 
 	// Contains information about DNS queries in subnets.
 	struct subnet_instrumentation	subnet_aggregates;
+
+	// Specifies the number of invalid frames received by the listener.
+	size_t				n_invalid_frames;
 };
 
 // Increments and updates the number of processed queries.
@@ -105,6 +108,9 @@ const bool instrumentation_initialize(struct instrumentation** pp_inst);
 void instrumentation_destroy(struct instrumentation* p_inst);
 
 // Updates the subnet activity data structure.
-void instrumentation_update_subnet_activity(struct subnet_instrumentation* p_subinst);
+void instrumentation_update_subnet_activity(struct instrumentation* p_inst, const size_t in, const size_t not_in);
+
+// Increments the number of invalid frames received by the listener.
+void instrumentation_increment_invalid(struct instrumentation* p_inst);
 
 #endif // INSTRUMENTATION_H
