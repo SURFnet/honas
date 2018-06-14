@@ -214,15 +214,16 @@ extern void honas_state_destroy(honas_state_t* state);
  * \note The timestamp being passed in here is only used to update the statistics inside the honas
  *       state. No check is made to see if the timestamp is within the official period for this state.
  *
- * \param state            The honas state to update
- * \param timestamp        The timestamp of the host name lookup request
- * \param client           The client that made the host name lookup request
- * \param host_name        The host name that was being looked up
- * \param host_name_length The length of the host name that was being looked up
- * \param subnet_act       A pointer to a subnet activity structure
+ * \param state                  The honas state to update
+ * \param timestamp              The timestamp of the host name lookup request
+ * \param client                 The client that made the host name lookup request
+ * \param host_name              The host name that was being looked up
+ * \param host_name_length       The length of the host name that was being looked up
+ * \param entity_prefix          The entity name prefix
+ * \param entity_prefix_length   The entity name length
  * \ingroup honas_state
  */
-extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length);
+extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length);
 
 /** Check if the host name hash matches possible lookups
  *

@@ -397,7 +397,7 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 				if (qname && qclass == LDNS_RR_CLASS_IN && query_is_valid_dns_type(qtype))
 				{
 					// Create a buffer for the hostname, including space for a possible entity name.
-					char hn_buf[384] = { 0 };
+					char hn_buf[256] = { 0 };
 
 					// Check whether subnet aggregation was requested.
 					if (ctx.aggregate_subnets)
@@ -410,7 +410,6 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 						if (subnet_activity_match_prefix(&client, &ctx.subnet_metadata, &match_ptr) == SA_OK && match_ptr)
 						{
 							strncpy(hn_buf, match_ptr->associated_entity->name, sizeof(match_ptr->associated_entity->name));
-							hn_buf[min(strlen(hn_buf), sizeof(hn_buf) - 2)] = '.';
 							in = 1;
 						}
 						else
@@ -424,8 +423,7 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 
 					// Convert all DNS query data accordingly.
 					char* hostname = ldns_rdf2str(qname);
-					strncat(hn_buf, hostname, sizeof(hn_buf) - strlen(hn_buf));
-					const size_t hostname_length = strlen(hn_buf);
+					const size_t hostname_length = strlen(hostname);
 					char* class_str = ldns_rr_class2str(qclass);
 					char* type_str = ldns_rr_type2str(qtype);
 
@@ -433,7 +431,7 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					if (ctx.dry_run)
 					{
 						// Separate all labels from the domain name, except the TLD.
-						uint8_t *part_start = (uint8_t*)hn_buf, *part_end = (uint8_t*)hn_buf + hostname_length, *part_next;
+						uint8_t *part_start = (uint8_t*)hostname, *part_end = (uint8_t*)hostname + hostname_length, *part_next;
 						while ((part_next = memchr(part_start, '.', part_end - part_start)) != NULL)
 						{
 							// Add the label to the HyperLogLog counters.
@@ -449,7 +447,7 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					else
 					{
 						// Store the DNS query in the Bloom filters.
-						honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hn_buf, hostname_length);
+						honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length, (uint8_t*)hn_buf, strlen((char*)hn_buf));
 
 						// Calculate the actual false positive rate, and check whether it is still acceptable.
 						for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)
