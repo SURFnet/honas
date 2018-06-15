@@ -244,7 +244,7 @@ static void filter_index_host_name_hash_transform(uint32_t filter_index, const b
 	}
 }
 
-void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length)
+void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length)
 {
 	/* Check if more than a second has passed since the previous request */
 	if (state->header->last_request < timestamp) {
@@ -282,22 +282,68 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 	uint32_t combination = client_hash % state->nr_filters_per_user_combinations;
 	lookup_combination(nr_filters, filter_indexes, nr_filters_per_user, combination);
 
-	// Canonicalize the domain name.
-	uint8_t* p = host_name;
-	for ( ; *p; ++p) *p = tolower(*p);
-
 	/* Ignore possible trailing '.' */
 	if (host_name[host_name_length - 1] == '.')
 		host_name_length--;
 
+	// Canonicalize the domain name.
+	uint8_t local_host_name[256] = { 0 };
+	for (size_t i = 0; i < host_name_length; ++i)
+	{
+		local_host_name[i] = tolower(host_name[i]);
+	}
+
 	uint8_t host_name_hash[SHA256_DIGEST_LENGTH], transformed_host_name_hash[SHA256_DIGEST_LENGTH];
 	byte_slice_t host_name_hash_slice = byte_slice_from_array(host_name_hash);
 	byte_slice_t transformed_host_name_hash_slice = byte_slice_from_array(transformed_host_name_hash);
-	const uint8_t *part_start = host_name, *part_end = host_name + host_name_length, *part_next;
+	const uint8_t *part_start = local_host_name, *part_end = local_host_name + host_name_length, *part_next;
 	uint8_t localbuf[512];
 	uint8_t sld_buf[256] = { 0 };
 
-	log_msg(INFO, "Processing domain name: %s", host_name);
+	log_msg(INFO, "Processing domain name: %s", local_host_name);
+
+	// Add the domain name as a whole, excluding the entity prefix.
+	SHA256(local_host_name, host_name_length, host_name_hash_slice.bytes);
+
+	/* Count host name */
+	assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
+	hllAdd(&state->host_name_count, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+
+	/* Register host name in filters */
+	for (uint32_t i = 0; i < nr_filters_per_user; i++)
+	{
+		uint32_t filter_index = filter_indexes[i];
+		filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
+		bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
+	}
+
+	// If present, prepend the entity name to the whole domain name.
+	if (entity_prefix)
+	{
+		// Copy the entity name as prefix to the local buffer and add a separator.
+		strncpy((char*)localbuf, (char*)entity_prefix, sizeof(localbuf));
+		localbuf[strlen((char*)localbuf)] = '@';
+
+		// Append the domain name label.
+		strncat((char*)localbuf, (char*)local_host_name, sizeof(localbuf) - strlen((char*)localbuf));
+
+		/* Calculate the hash of the label */
+		SHA256(localbuf, strlen((char*)localbuf), host_name_hash_slice.bytes);
+
+		/* Count host name */
+		assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
+		hllAdd(&state->host_name_count, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+
+		/* Register host name in filters */
+		for (uint32_t i = 0; i < nr_filters_per_user; i++)
+		{
+			uint32_t filter_index = filter_indexes[i];
+			filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
+			bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
+		}
+
+		log_msg(INFO, "Added %s to Bloom filter.", (char*)localbuf);
+	}
 
 	/* Process the host name parts */
 	/* Add hashes for all subdomains, except for the tld (so the part must always include at least one '.') */

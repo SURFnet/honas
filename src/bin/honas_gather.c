@@ -399,12 +399,12 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					// Create a buffer for the hostname, including space for a possible entity name.
 					char hn_buf[256] = { 0 };
 
+					// Provide instrumentation data for subnet activity.
+					size_t in = 0, notin = 0;
+
 					// Check whether subnet aggregation was requested.
 					if (ctx.aggregate_subnets)
 					{
-						// Provide instrumentation data for subnet activity.
-						size_t in = 0, notin = 0;
-
 						// Look up the address in the prefix-entity mapping subsystem.
 						struct prefix_match* match_ptr = NULL;
 						if (subnet_activity_match_prefix(&client, &ctx.subnet_metadata, &match_ptr) == SA_OK && match_ptr)
@@ -447,7 +447,7 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					else
 					{
 						// Store the DNS query in the Bloom filters.
-						honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length, (uint8_t*)hn_buf, strlen((char*)hn_buf));
+						honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length, in == 1 ? (uint8_t*)hn_buf : NULL, in == 1 ? strlen((char*)hn_buf) : 0);
 
 						// Calculate the actual false positive rate, and check whether it is still acceptable.
 						for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)

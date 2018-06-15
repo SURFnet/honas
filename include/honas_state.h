@@ -223,7 +223,7 @@ extern void honas_state_destroy(honas_state_t* state);
  * \param entity_prefix_length   The entity name length
  * \ingroup honas_state
  */
-extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length);
+extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length);
 
 /** Check if the host name hash matches possible lookups
  *

@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2017, Quarantainenet Holding B.V.
- * Copyright (c) 2014, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2018, Gijs Rijnders, SURFnet
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -76,7 +75,7 @@ START_TEST(test_aggregate_states)
 
 	// Add a few domain names to the first state.
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client
-		, (uint8_t*)"google.com", strlen("google.com"), NULL, 0);
+		, (uint8_t*)"google.com", strlen("google.com"), (uint8_t*)"Google Inc", strlen("Google Inc"));
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client
 		, (uint8_t*)"surfnet.nl", strlen("surfnet.nl"), NULL, 0);
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client
@@ -86,18 +85,20 @@ START_TEST(test_aggregate_states)
 	honas_state_register_host_name_lookup(&second_state, time(NULL), &client
 		, (uint8_t*)"surf.net", strlen("surf.net"), NULL, 0);
 	honas_state_register_host_name_lookup(&second_state, time(NULL), &client
-		, (uint8_t*)"sidn.nl", strlen("sidn.nl"), NULL, 0);
+		, (uint8_t*)"sidn.nl", strlen("sidn.nl"), (uint8_t*)"netSURF", strlen("netSURF"));
 
 	// Perform a lookup for all added domain names.
 	uint8_t bytes[SHA256_STRING_LENGTH / 2];
-	ck_assert(decode_string_hex("d4c9d9027326271a89ce51fcaf328ed673f17be33469ff979e8ab8dd501e664f"
+	ck_assert(decode_string_hex("a3a410b1235a4d97fbcd7c0fff1a947d6ca8a62756dfd016e74e9a69d69b38a0"
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
 	const uint32_t d1 = honas_state_check_host_name_lookups(&first_state, byte_slice_from_array(bytes), NULL);
 	ck_assert(decode_string_hex("94a2d36558fd752ad70b303057a24c6ed61758e1f3eb63402651ca6820ba6c09"
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
 	const uint32_t d2 = honas_state_check_host_name_lookups(&first_state
 		, byte_slice_from_array(bytes), NULL);
-	ck_assert(decode_string_hex("82f248bb3116b20106723aba16c51cf248e45135e87509e86a8eda244634cd85"
+
+	// Only test the SLD.TLD in this check.
+	ck_assert(decode_string_hex("efcd513fc9fea11685641b98b3285b8500c4fe7cfd94b75b07a5ab89b9619f5e"
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
 	const uint32_t d3 = honas_state_check_host_name_lookups(&first_state
 		, byte_slice_from_array(bytes), NULL);
@@ -105,7 +106,9 @@ START_TEST(test_aggregate_states)
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
 	const uint32_t d4 = honas_state_check_host_name_lookups(&first_state
 		, byte_slice_from_array(bytes), NULL);
-	ck_assert(decode_string_hex("17ca13c1678c969e01690643494ae1e4faabd96801da50442dcb173c294594f3"
+
+	// Entity netSURF is prepended to domain name sidn.nl here.
+	ck_assert(decode_string_hex("df944e735420166e5e443d57a6fb89f05302aff2dba6029364614174a929362d"
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
 	const uint32_t d5 = honas_state_check_host_name_lookups(&first_state
 		, byte_slice_from_array(bytes), NULL);
@@ -127,7 +130,7 @@ START_TEST(test_aggregate_states)
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
 	const uint32_t d4_2 = honas_state_check_host_name_lookups(&second_state
 		, byte_slice_from_array(bytes), NULL);
-	ck_assert(decode_string_hex("17ca13c1678c969e01690643494ae1e4faabd96801da50442dcb173c294594f3"
+	ck_assert(decode_string_hex("df944e735420166e5e443d57a6fb89f05302aff2dba6029364614174a929362d"
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
 	const uint32_t d5_2 = honas_state_check_host_name_lookups(&second_state
 		, byte_slice_from_array(bytes), NULL);
