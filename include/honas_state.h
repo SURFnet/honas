@@ -203,6 +203,19 @@ extern int honas_state_load(honas_state_t* state, const char* filename, bool rea
  */
 extern void honas_state_destroy(honas_state_t* state);
 
+// Contains dry run counters.
+struct dry_run_counters
+{
+	hll                             hourly_global;
+	hll                             daily_global;
+	unsigned long long              hourly_total_queries;
+	unsigned long long              daily_total_queries;
+
+	// Maximum numbers that will be used to give an advice.
+	unsigned long long              hourly_maximum;
+	unsigned long long              daily_maximum;
+};
+
 /** Register a host name lookup
  *
  * This is the function that `honas-gather` uses to register host name lookups in the honas state.
@@ -221,9 +234,10 @@ extern void honas_state_destroy(honas_state_t* state);
  * \param host_name_length       The length of the host name that was being looked up
  * \param entity_prefix          The entity name prefix
  * \param entity_prefix_length   The entity name length
+ * \param p_dryrun               The dry-run parameters if applicable.
  * \ingroup honas_state
  */
-extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length);
+extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length, struct dry_run_counters* p_dryrun);
 
 /** Check if the host name hash matches possible lookups
  *

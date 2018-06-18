@@ -86,19 +86,6 @@ typedef enum
 	CONN_STATE_STOPPED,
 } conn_state;
 
-// Contains dry run counters.
-struct dry_run_counters
-{
-	hll				hourly_global;
-	hll				daily_global;
-	unsigned long long		hourly_total_queries;
-	unsigned long long		daily_total_queries;
-
-	// Maximum numbers that will be used to give an advice.
-	unsigned long long		hourly_maximum;
-	unsigned long long		daily_maximum;
-};
-
 // The Honas gather program context.
 struct capture
 {
@@ -145,6 +132,7 @@ static const uint16_t relevant_dns_types[] = {
         LDNS_RR_TYPE_NS, /* NS */
         LDNS_RR_TYPE_MX, /* MX */
         LDNS_RR_TYPE_AAAA, /* AAAA */
+	LDNS_RR_TYPE_PTR, /* PTR */
 };
 static const size_t relevant_dns_types_count = sizeof(relevant_dns_types) / sizeof(relevant_dns_types[0]);
 
@@ -161,13 +149,6 @@ static bool query_is_valid_dns_type(const ldns_rr_type qtype)
 
 	return false;
 }
-
-// Gets a fast 64-bit hash from a byte slice of data.
-static uint64_t uint64_hash(const byte_slice_t data)
-{
-	return byte_slice_MurmurHash64A(data, 0xadc83b19ULL);
-}
-
 
 // --------------------------------------------------------------------------------------------------------
 
@@ -332,34 +313,10 @@ static bool can_read_full_frame(struct connection* conn)
 // Processes a DNStap message, and gives output to the Bloom filters.
 static bool decode_dnstap_message(const Dnstap__Message* m)
 {
-	bool is_query = false;
 	bool return_val = false;
 
-	// Determine whether we are dealing with a DNS query.
-	switch (m->type)
-	{
-		case DNSTAP__MESSAGE__TYPE__AUTH_QUERY:
-		case DNSTAP__MESSAGE__TYPE__RESOLVER_QUERY:
-		case DNSTAP__MESSAGE__TYPE__CLIENT_QUERY:
-		case DNSTAP__MESSAGE__TYPE__FORWARDER_QUERY:
-		case DNSTAP__MESSAGE__TYPE__STUB_QUERY:
-		case DNSTAP__MESSAGE__TYPE__TOOL_QUERY:
-			is_query = true;
-			break;
-		case DNSTAP__MESSAGE__TYPE__AUTH_RESPONSE:
-		case DNSTAP__MESSAGE__TYPE__RESOLVER_RESPONSE:
-		case DNSTAP__MESSAGE__TYPE__CLIENT_RESPONSE:
-		case DNSTAP__MESSAGE__TYPE__FORWARDER_RESPONSE:
-		case DNSTAP__MESSAGE__TYPE__STUB_RESPONSE:
-		case DNSTAP__MESSAGE__TYPE__TOOL_RESPONSE:
-			is_query = false;
-			break;
-		default:
-			return return_val;
-	}
-
-	// We only want to process queries that have questions.
-	if (is_query && m->has_query_message)
+	// Determine whether we are dealing with a DNS query, and we only want to process queries that have questions.
+	if (m->type == DNSTAP__MESSAGE__TYPE__CLIENT_QUERY && m->has_query_message)
 	{
 		const ProtobufCBinaryData* message = &m->query_message;
 		ldns_pkt* pkt = NULL;
@@ -427,41 +384,22 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					char* class_str = ldns_rr_class2str(qclass);
 					char* type_str = ldns_rr_type2str(qtype);
 
-					// Check if we are in dry run mode or not.
-					if (ctx.dry_run)
+					// Store the DNS query in the Bloom filters.
+					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length
+						, in == 1 ? (uint8_t*)hn_buf : NULL, in == 1 ? strlen((char*)hn_buf) : 0, ctx.dry_run ? &ctx.dry_run_data : NULL);
+
+					// Calculate the actual false positive rate, and check whether it is still acceptable.
+					for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)
 					{
-						// Separate all labels from the domain name, except the TLD.
-						uint8_t *part_start = (uint8_t*)hostname, *part_end = (uint8_t*)hostname + hostname_length, *part_next;
-						while ((part_next = memchr(part_start, '.', part_end - part_start)) != NULL)
+						const uint32_t bits_set = current_active_state.filter_bits_set[i];
+						const double fill_rate = (double)bits_set / (double)current_active_state.header->number_of_bits_per_filter;
+						const double act_fpr = pow(fill_rate, (double)current_active_state.header->number_of_hashes);
+
+						// Does the false positive rate of this filter exceed the threshold?
+						if (!ctx.fpr_warning_passed && act_fpr > 0.001)
 						{
-							// Add the label to the HyperLogLog counters.
-							hllAdd(&ctx.dry_run_data.hourly_global, uint64_hash(byte_slice(part_start, part_end - part_start)));
-							hllAdd(&ctx.dry_run_data.daily_global, uint64_hash(byte_slice(part_start, part_end - part_start)));
-							part_start = part_next + 1; /* +1 as the next part actually starts after the '.' */
-						}
-
-						// Update total query counters.
-						++ctx.dry_run_data.hourly_total_queries;
-						++ctx.dry_run_data.daily_total_queries;
-					}
-					else
-					{
-						// Store the DNS query in the Bloom filters.
-						honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length, in == 1 ? (uint8_t*)hn_buf : NULL, in == 1 ? strlen((char*)hn_buf) : 0);
-
-						// Calculate the actual false positive rate, and check whether it is still acceptable.
-						for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)
-						{
-							const uint32_t bits_set = current_active_state.filter_bits_set[i];
-							const double fill_rate = (double)bits_set / (double)current_active_state.header->number_of_bits_per_filter;
-							const double act_fpr = pow(fill_rate, (double)current_active_state.header->number_of_hashes);
-
-							// Does the false positive rate of this filter exceed the threshold?
-							if (!ctx.fpr_warning_passed && act_fpr > 0.001)
-							{
-								log_msg(WARN, "The actual false positive rate %f of filter %i exceeds the threshold %f!", act_fpr, i, 0.001);
-								ctx.fpr_warning_passed = true;
-							}
+							log_msg(WARN, "The actual false positive rate %f of filter %i exceeds the threshold %f!", act_fpr, i, 0.001);
+							ctx.fpr_warning_passed = true;
 						}
 					}
 
@@ -1217,10 +1155,14 @@ static void dry_run_destroy()
 static void dry_run_hourly_event(evutil_socket_t fd, short what, void *arg)
 {
 	struct dry_run_counters* data = (struct dry_run_counters*)arg;
+	char date_str[256];
+
+	time_t hour = time(NULL);
+	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&hour));
 
 	// Write the hourly dry run statistics to the output file.
 	const unsigned long long current = hllCount(&data->hourly_global, NULL);
-	fprintf(dryrun_fd, "Distinct count this hour: %llu, total query count: %llu\n", current, data->hourly_total_queries);
+	fprintf(dryrun_fd, "[%s] Distinct count this hour: %llu, total query count: %llu\n", date_str, current, data->hourly_total_queries);
 	fflush(dryrun_fd);
 
 	// Set maximum if necessary.
@@ -1236,10 +1178,14 @@ static void dry_run_hourly_event(evutil_socket_t fd, short what, void *arg)
 static void dry_run_daily_event(evutil_socket_t fd, short what, void *arg)
 {
 	struct dry_run_counters* data = (struct dry_run_counters*)arg;
+	char date_str[256];
+
+	time_t day = time(NULL);
+	strftime(date_str, sizeof(date_str), "%d-%m-%Y", localtime(&day));
 
 	// Write the hourly dry run statistics to the output file.
 	const unsigned long long current = hllCount(&data->daily_global, NULL);
-	fprintf(dryrun_fd, "Distinct count this day: %llu, total query count: %llu\n", current, data->daily_total_queries);
+	fprintf(dryrun_fd, "[%s] Distinct count this day: %llu, total query count: %llu\n", date_str, current, data->daily_total_queries);
 	fflush(dryrun_fd);
 
 	// Set maximum if necessary.
@@ -1282,11 +1228,14 @@ static void dry_run_advice()
 {
 	char date_str[256];
 
+	// Store the current maxima.
+	ctx.dry_run_data.hourly_maximum = max(ctx.dry_run_data.hourly_maximum, hllCount(&ctx.dry_run_data.hourly_global, NULL));
+	ctx.dry_run_data.daily_maximum = max(ctx.dry_run_data.daily_maximum, hllCount(&ctx.dry_run_data.daily_global, NULL));
+
 	fprintf(dryrun_fd, "------------------------------------ Advice ------------------------------------\n");
 	fprintf(dryrun_fd, "-------------------------------- Hourly Filters --------------------------------\n");
-	time_t rounded_hour = time(NULL);
-	rounded_hour %= 3600;
-	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&rounded_hour));
+	time_t hour = time(NULL);
+	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&hour));
 
 	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
 	unsigned long m = bloom_filter_size((double)1 / (double)1000, ctx.dry_run_data.hourly_maximum);
@@ -1307,9 +1256,8 @@ static void dry_run_advice()
 	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
 
 	fprintf(dryrun_fd, "-------------------------------- Daily Filters ---------------------------------\n");
-	time_t rounded_day = time(NULL);
-	rounded_day %= 86400;
-	strftime(date_str, sizeof(date_str), "%d-%m-%Y", localtime(&rounded_day));
+	time_t day = time(NULL);
+	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&day));
 
 	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
 	m = bloom_filter_size((double)1 / (double)1000, ctx.dry_run_data.daily_maximum);

@@ -244,7 +244,7 @@ static void filter_index_host_name_hash_transform(uint32_t filter_index, const b
 	}
 }
 
-void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length)
+void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length, struct dry_run_counters* p_dryrun)
 {
 	/* Check if more than a second has passed since the previous request */
 	if (state->header->last_request < timestamp) {
@@ -300,7 +300,7 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 	uint8_t localbuf[512];
 	uint8_t sld_buf[256] = { 0 };
 
-	log_msg(INFO, "Processing domain name: %s", local_host_name);
+	log_msg(DEBUG, "Processing domain name: %s", local_host_name);
 
 	// Add the domain name as a whole, excluding the entity prefix.
 	SHA256(local_host_name, host_name_length, host_name_hash_slice.bytes);
@@ -315,6 +315,13 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 		uint32_t filter_index = filter_indexes[i];
 		filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
 		bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
+	}
+
+	// Add to dry-run parameters.
+	if (p_dryrun)
+	{
+		hllAdd(&p_dryrun->hourly_global, uint64_hash(byte_slice(local_host_name, host_name_length)));
+		hllAdd(&p_dryrun->daily_global, uint64_hash(byte_slice(local_host_name, host_name_length)));
 	}
 
 	// If present, prepend the entity name to the whole domain name.
@@ -334,6 +341,13 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 		assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
 		hllAdd(&state->host_name_count, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
 
+		// Add to dry-run parameters.
+		if (p_dryrun)
+		{
+			hllAdd(&p_dryrun->hourly_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+			hllAdd(&p_dryrun->daily_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+		}
+
 		/* Register host name in filters */
 		for (uint32_t i = 0; i < nr_filters_per_user; i++)
 		{
@@ -341,8 +355,6 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 			filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
 			bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
 		}
-
-		log_msg(INFO, "Added %s to Bloom filter.", (char*)localbuf);
 	}
 
 	/* Process the host name parts */
@@ -366,10 +378,12 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 			assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
 			hllAdd(&state->host_name_count, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
 
-			// Debugging to find out what is added to the Bloom filter.
-			char addded[256] = { 0 };
-			strncpy(addded, (char*)localbuf, strlen((char*)localbuf));
-			log_msg(INFO, "Added %s to Bloom filter.", addded);
+			// Add to dry-run parameters.
+			if (p_dryrun)
+			{
+				hllAdd(&p_dryrun->hourly_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+				hllAdd(&p_dryrun->daily_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+			}
 
 			/* Register host name in filters */
 			for (uint32_t i = 0; i < nr_filters_per_user; i++)
@@ -387,10 +401,12 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 		assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
 		hllAdd(&state->host_name_count, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
 
-		// Debugging to find out what is added to the Bloom filter.
-		char addded[256] = { 0 };
-		strncpy(addded, (char*)part_start, part_next - part_start);
-		log_msg(INFO, "Added %s to Bloom filter.", addded);
+		// Add to dry-run parameters.
+		if (p_dryrun)
+		{
+			hllAdd(&p_dryrun->hourly_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+			hllAdd(&p_dryrun->daily_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+		}
 
 		/* Register host name in filters */
 		for (uint32_t i = 0; i < nr_filters_per_user; i++)
@@ -415,6 +431,17 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 	assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
 	hllAdd(&state->host_name_count, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
 
+	// Add to dry-run parameters.
+	if (p_dryrun)
+	{
+		hllAdd(&p_dryrun->hourly_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+		hllAdd(&p_dryrun->daily_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+
+		// Update total query counters.
+		++p_dryrun->hourly_total_queries;
+		++p_dryrun->daily_total_queries;
+	}
+
 	/* Register host name in filters */
 	for (uint32_t i = 0; i < nr_filters_per_user; i++)
 	{
@@ -422,12 +449,9 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 		filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
 		bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
 	}
-
-	log_msg(INFO, "Added %s to Bloom filter.", sld_buf);
 }
 
-uint32_t honas_state_check_host_name_lookups(honas_state_t* state, const byte_slice_t host_name_hash, bitset_t* filters_hit)
-{
+uint32_t honas_state_check_host_name_lookups(honas_state_t* state, const byte_slice_t host_name_hash, bitset_t* filters_hit) {
 	/* Lookup filter information */
 	byte_slice_t* filters = state->filters;
 	uint32_t nr_filters = state->header->number_of_filters;
