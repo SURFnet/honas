@@ -951,7 +951,9 @@ static void recheck_handler(int signum __attribute__((unused)))
 		finalize_state(&current_active_state);
 		load_gather_config(&config, init_dirfd, config_file);
 		create_state(&config, &current_active_state, now);
-		return;
+
+		// Log the state rotation event.
+		log_msg(INFO, "Honas state was rotated!");
 	}
 
 	// Schedule alarm to recheck some time in the future.
@@ -1392,6 +1394,9 @@ int main(int argc, char** argv)
 	if (!try_open_active_state(&current_active_state)) {
 		create_state(&config, &current_active_state, time(NULL));
 	}
+
+	// Start up the state rotation process. The recheck handler will schedule alarms.
+	recheck_handler(0);
 
 	// Log a warning about the filter size if applicable.
 	const uint32_t req_entropy = honas_state_calculate_required_entropy(&current_active_state);
