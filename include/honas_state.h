@@ -38,6 +38,8 @@
 #include "inet.h"
 #include "subnet_activity.h"
 
+#include <ldns/ldns.h>
+
 #define HONAS_STATE_FILE_MAGIC "DNSBLOOM"
 #define CURRENT_HONAS_STATE_MAJOR_VERSION 1
 #define CURRENT_HONAS_STATE_MINOR_VERSION 0
@@ -234,10 +236,12 @@ struct dry_run_counters
  * \param host_name_length       The length of the host name that was being looked up
  * \param entity_prefix          The entity name prefix
  * \param entity_prefix_length   The entity name length
- * \param p_dryrun               The dry-run parameters if applicable.
+ * \param p_dryrun               The dry-run parameters if applicable
+ * \param qtype                  The query type (A, AAAA, NS, MX, PTR)
  * \ingroup honas_state
  */
-extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length, struct dry_run_counters* p_dryrun);
+extern void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name
+	, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length, struct dry_run_counters* p_dryrun, const ldns_rr_type qtype);
 
 /** Check if the host name hash matches possible lookups
  *

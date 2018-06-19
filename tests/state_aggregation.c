@@ -29,6 +29,7 @@
 
 #include <check.h>
 #include <openssl/sha.h>
+#include <ldns/ldns.h>
 
 #define SHA256_STRING_LENGTH	64
 
@@ -75,17 +76,17 @@ START_TEST(test_aggregate_states)
 
 	// Add a few domain names to the first state.
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client	, (uint8_t*)"google.com"
-		, strlen("google.com"), (uint8_t*)"Google Inc", strlen("Google Inc"), NULL);
+		, strlen("google.com"), (uint8_t*)"Google Inc", strlen("Google Inc"), NULL, LDNS_RR_TYPE_A);
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client, (uint8_t*)"surfnet.nl"
-		, strlen("surfnet.nl"), NULL, 0, NULL);
+		, strlen("surfnet.nl"), NULL, 0, NULL, LDNS_RR_TYPE_MX);
 	honas_state_register_host_name_lookup(&first_state, time(NULL), &client, (uint8_t*)"unbound.prutsnet.nl"
-		, strlen("unbound.prutsnet.nl"), NULL, 0, NULL);
+		, strlen("unbound.prutsnet.nl"), NULL, 0, NULL, LDNS_RR_TYPE_A);
 
 	// Add a few different domain names to the second state.
 	honas_state_register_host_name_lookup(&second_state, time(NULL), &client, (uint8_t*)"surf.net"
-		, strlen("surf.net"), NULL, 0, NULL);
+		, strlen("surf.net"), NULL, 0, NULL, LDNS_RR_TYPE_NS);
 	honas_state_register_host_name_lookup(&second_state, time(NULL), &client, (uint8_t*)"sidn.nl"
-		, strlen("sidn.nl"), (uint8_t*)"netSURF", strlen("netSURF"), NULL);
+		, strlen("sidn.nl"), (uint8_t*)"netSURF", strlen("netSURF"), NULL, LDNS_RR_TYPE_AAAA);
 
 	// Perform a lookup for all added domain names.
 	uint8_t bytes[SHA256_STRING_LENGTH / 2];

@@ -244,7 +244,8 @@ static void filter_index_host_name_hash_transform(uint32_t filter_index, const b
 	}
 }
 
-void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length, const uint8_t* entity_prefix, size_t entity_prefix_length, struct dry_run_counters* p_dryrun)
+void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timestamp, const struct in_addr46* client, const uint8_t* host_name, size_t host_name_length
+	, const uint8_t* entity_prefix, size_t entity_prefix_length, struct dry_run_counters* p_dryrun, const ldns_rr_type qtype)
 {
 	/* Check if more than a second has passed since the previous request */
 	if (state->header->last_request < timestamp) {
@@ -357,22 +358,48 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 		}
 	}
 
-	/* Process the host name parts */
-	/* Add hashes for all subdomains, except for the tld (so the part must always include at least one '.') */
-	while ((part_next = memchr(part_start, '.', part_end - part_start)) != NULL)
+	// Check which record type we are dealing with. If it is a PTR record, we don't want to store the separate labels.
+	if (qtype != LDNS_RR_TYPE_PTR)
 	{
-		// Check if an entity name was specified.
-		if (entity_prefix)
+		/* Process the host name parts */
+		/* Add hashes for all subdomains, except for the tld (so the part must always include at least one '.') */
+		while ((part_next = memchr(part_start, '.', part_end - part_start)) != NULL)
 		{
-			// Copy the entity name as prefix to the local buffer and add a separator.
-			strncpy((char*)localbuf, (char*)entity_prefix, sizeof(localbuf));
-			localbuf[strlen((char*)localbuf)] = '@';
+			// Check if an entity name was specified.
+			if (entity_prefix)
+			{
+				// Copy the entity name as prefix to the local buffer and add a separator.
+				strncpy((char*)localbuf, (char*)entity_prefix, sizeof(localbuf));
+				localbuf[strlen((char*)localbuf)] = '@';
 
-			// Append the domain name label.
-			strncat((char*)localbuf, (char*)part_start, part_next - part_start);
+				// Append the domain name label.
+				strncat((char*)localbuf, (char*)part_start, part_next - part_start);
+
+				/* Calculate the hash of the label */
+				SHA256(localbuf, strlen((char*)localbuf), host_name_hash_slice.bytes);
+
+				/* Count host name */
+				assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
+				hllAdd(&state->host_name_count, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+
+				// Add to dry-run parameters.
+				if (p_dryrun)
+				{
+					hllAdd(&p_dryrun->hourly_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+					hllAdd(&p_dryrun->daily_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+				}
+
+				/* Register host name in filters */
+				for (uint32_t i = 0; i < nr_filters_per_user; i++)
+				{
+					uint32_t filter_index = filter_indexes[i];
+					filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
+					bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
+				}
+			}
 
 			/* Calculate the hash of the label */
-			SHA256(localbuf, strlen((char*)localbuf), host_name_hash_slice.bytes);
+			SHA256(part_start, part_next - part_start, host_name_hash_slice.bytes);
 
 			/* Count host name */
 			assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
@@ -392,10 +419,17 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 				filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
 				bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
 			}
+
+			// Copy the current label to a separate buffer, so that we can take out the SLD in the end.
+			strncpy((char*)sld_buf, (char*)part_start, part_end - part_start);
+			sld_buf[part_end - part_start] = 0;
+
+			/* Check for next part */
+			part_start = part_next + 1; /* +1 as the next part actually starts after the '.' */
 		}
 
-		/* Calculate the hash of the label */
-		SHA256(part_start, part_next - part_start, host_name_hash_slice.bytes);
+		// Add the SLD.TLD to the Bloom filter as well.
+		SHA256(sld_buf, strlen((char*)sld_buf), host_name_hash_slice.bytes);
 
 		/* Count host name */
 		assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
@@ -406,6 +440,10 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 		{
 			hllAdd(&p_dryrun->hourly_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
 			hllAdd(&p_dryrun->daily_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
+
+			// Update total query counters.
+			++p_dryrun->hourly_total_queries;
+			++p_dryrun->daily_total_queries;
 		}
 
 		/* Register host name in filters */
@@ -415,39 +453,6 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 			filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
 			bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
 		}
-
-		// Copy the current label to a separate buffer, so that we can take out the SLD in the end.
-		strncpy((char*)sld_buf, (char*)part_start, part_end - part_start);
-		sld_buf[part_end - part_start] = 0;
-
-		/* Check for next part */
-		part_start = part_next + 1; /* +1 as the next part actually starts after the '.' */
-	}
-
-	// Add the SLD.TLD to the Bloom filter as well.
-	SHA256(sld_buf, strlen((char*)sld_buf), host_name_hash_slice.bytes);
-
-	/* Count host name */
-	assert(SHA256_DIGEST_LENGTH >= sizeof(uint64_t));
-	hllAdd(&state->host_name_count, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
-
-	// Add to dry-run parameters.
-	if (p_dryrun)
-	{
-		hllAdd(&p_dryrun->hourly_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
-		hllAdd(&p_dryrun->daily_global, byte_slice_as_uint64_ptr(host_name_hash_slice)[0]);
-
-		// Update total query counters.
-		++p_dryrun->hourly_total_queries;
-		++p_dryrun->daily_total_queries;
-	}
-
-	/* Register host name in filters */
-	for (uint32_t i = 0; i < nr_filters_per_user; i++)
-	{
-		uint32_t filter_index = filter_indexes[i];
-		filter_index_host_name_hash_transform(filter_index, host_name_hash_slice, transformed_host_name_hash_slice);
-		bloom_set(filters[filter_index], transformed_host_name_hash_slice, nr_hashes);
 	}
 }
 

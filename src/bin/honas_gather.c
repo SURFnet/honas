@@ -57,6 +57,7 @@
 #define HONAS_INSTRUMENTATION	"/var/spool/honas/instrumentation.log"
 #define HONAS_SUBNET_FILE	"/etc/honas/subnet_activity.json"
 #define HONAS_DRYRUNFILE	"/var/spool/honas/dry_run.log"
+#define FPR_THRESHOLD		0.001
 
 static const char active_state_file_name[] = "active_state";
 static honas_state_t current_active_state;
@@ -386,7 +387,8 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 
 					// Store the DNS query in the Bloom filters.
 					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length
-						, in == 1 ? (uint8_t*)hn_buf : NULL, in == 1 ? strlen((char*)hn_buf) : 0, ctx.dry_run ? &ctx.dry_run_data : NULL);
+						, in == 1 ? (uint8_t*)hn_buf : NULL, in == 1 ? strlen((char*)hn_buf) : 0, ctx.dry_run ? &ctx.dry_run_data : NULL
+						, qtype);
 
 					// Calculate the actual false positive rate, and check whether it is still acceptable.
 					for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)
@@ -396,9 +398,9 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 						const double act_fpr = pow(fill_rate, (double)current_active_state.header->number_of_hashes);
 
 						// Does the false positive rate of this filter exceed the threshold?
-						if (!ctx.fpr_warning_passed && act_fpr > 0.001)
+						if (act_fpr > FPR_THRESHOLD && !ctx.fpr_warning_passed)
 						{
-							log_msg(WARN, "The actual false positive rate %f of filter %i exceeds the threshold %f!", act_fpr, i, 0.001);
+							log_msg(WARN, "The actual false positive rate %f of filter %i exceeds the threshold %f!", act_fpr, i, FPR_THRESHOLD);
 							ctx.fpr_warning_passed = true;
 						}
 					}
@@ -952,8 +954,8 @@ static void recheck_handler(int signum __attribute__((unused)))
 		load_gather_config(&config, init_dirfd, config_file);
 		create_state(&config, &current_active_state, now);
 
-		// Log the state rotation event.
-		log_msg(INFO, "Honas state was rotated!");
+		// Reset the false positive rate threshold warning.
+		ctx.fpr_warning_passed = false;
 	}
 
 	// Schedule alarm to recheck some time in the future.
@@ -1381,6 +1383,13 @@ int main(int argc, char** argv)
 
 	log_msg(INFO, "%s (version %s)", program_name, VERSION);
 
+	/* Setup signal handlers */
+	if (!setup_signal_handlers())
+	{
+		log_msg(ERR, "Failed to install signal handlers!");
+		return 1;
+	}
+
 	/* Open current working directory for consistent relative config file loading */
 	init_dirfd = open(".", O_PATH | O_DIRECTORY | O_CLOEXEC);
 	log_passert(init_dirfd != -1, "Failed to open initial working directory");
@@ -1414,13 +1423,6 @@ int main(int argc, char** argv)
 	else
 	{
 		log_msg(INFO, "Initialized DNStap input!");
-	}
-
-	/* Setup signal handlers */
-	if (!setup_signal_handlers())
-	{
-		log_msg(ERR, "Failed to install signal handlers!");
-		return 1;
 	}
 
 	// Initialize Honas instrumentation.
