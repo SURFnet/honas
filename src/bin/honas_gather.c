@@ -387,7 +387,7 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					char* type_str = ldns_rr_type2str(qtype);
 
 					// Debug which domain names are stored.
-					log_msg(DEBUG, "%s stored in Bloom filter!");
+					log_msg(DEBUG, "%s@%s stored in Bloom filter!", hn_buf, hostname);
 
 					// Store the DNS query in the Bloom filters.
 					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length
@@ -500,13 +500,16 @@ static void process_data_frame(struct connection* conn)
 
 	// Check if both the unpacked data is valid, and if the unpacked data
 	// actually contains a valid message.
-	if (d && d->message)
+	if (d)
 	{
-		// Try to decode the DNStap message.
-		if (!decode_dnstap_message(d->message))
+		if (d->message)
 		{
-			log_msg(ERR, "Failed to decode the DNStap message!");
-			instrumentation_increment_invalid(inst_data);
+			// Try to decode the DNStap message.
+			if (!decode_dnstap_message(d->message))
+			{
+				log_msg(ERR, "Failed to decode the DNStap message!");
+				instrumentation_increment_invalid(inst_data);
+			}
 		}
 
 		// Clean up protobuf allocated structures.

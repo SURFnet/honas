@@ -301,8 +301,6 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 	uint8_t localbuf[512];
 	uint8_t sld_buf[256] = { 0 };
 
-	log_msg(DEBUG, "Processing domain name: %s", local_host_name);
-
 	// Add the domain name as a whole, excluding the entity prefix.
 	SHA256(local_host_name, host_name_length, host_name_hash_slice.bytes);
 

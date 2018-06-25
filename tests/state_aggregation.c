@@ -87,6 +87,8 @@ START_TEST(test_aggregate_states)
 		, strlen("surf.net"), NULL, 0, NULL, LDNS_RR_TYPE_NS);
 	honas_state_register_host_name_lookup(&second_state, time(NULL), &client, (uint8_t*)"sidn.nl"
 		, strlen("sidn.nl"), (uint8_t*)"netSURF", strlen("netSURF"), NULL, LDNS_RR_TYPE_AAAA);
+	honas_state_register_host_name_lookup(&second_state, time(NULL), &client, (uint8_t*)"140.123.42.192.in-addr.arpa"
+		, strlen("140.123.42.192.in-addr.arpa"), NULL, 0, NULL, LDNS_RR_TYPE_PTR);
 
 	// Perform a lookup for all added domain names.
 	uint8_t bytes[SHA256_STRING_LENGTH / 2];
@@ -114,7 +116,7 @@ START_TEST(test_aggregate_states)
 	const uint32_t d5 = honas_state_check_host_name_lookups(&first_state
 		, byte_slice_from_array(bytes), NULL);
 
-	// Query the last two domain names in the second filter.
+	// Query two domain names in the second filter.
 	ck_assert(decode_string_hex("d4c9d9027326271a89ce51fcaf328ed673f17be33469ff979e8ab8dd501e664f"
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
 	const uint32_t d1_2 = honas_state_check_host_name_lookups(&second_state
@@ -136,6 +138,16 @@ START_TEST(test_aggregate_states)
 	const uint32_t d5_2 = honas_state_check_host_name_lookups(&second_state
 		, byte_slice_from_array(bytes), NULL);
 
+	// Perform a query for a PTR record to test the deviating behavior.
+	ck_assert(decode_string_hex("e9e3f2787211f2d9ca024380e747925626c0df46a734a4e0a9f4d92b8d021441"
+		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
+	const uint32_t ptr_1 = honas_state_check_host_name_lookups(&second_state
+		, byte_slice_from_array(bytes), NULL);
+	ck_assert(decode_string_hex("675c55fd136b04755389d1992c35f4957e2c12ccf9868e0e1e1049c463db9bcf"
+		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
+	const uint32_t ptr_2 = honas_state_check_host_name_lookups(&second_state
+		, byte_slice_from_array(bytes), NULL);
+
 	// Check whether the results are correct.
 	ck_assert_int_gt(d1, 0);
 	ck_assert_int_gt(d2, 0);
@@ -153,6 +165,10 @@ START_TEST(test_aggregate_states)
 	ck_assert_int_eq(d1_2, 0);
 	ck_assert_int_eq(d2_2, 0);
 	ck_assert_int_eq(d3_2, 0);
+
+	// Check the deviating PTR record behavior.
+	ck_assert_int_gt(ptr_1, 0);
+	ck_assert_int_eq(ptr_2, 0);
 
 	// Now aggregate the states, taking the union.
 	const bool agg_res = honas_state_aggregate_combine(&first_state, &second_state);
@@ -179,12 +195,17 @@ START_TEST(test_aggregate_states)
 		, SHA256_STRING_LENGTH, bytes, sizeof(bytes));
 	const uint32_t d5_final = honas_state_check_host_name_lookups(&first_state
 		, byte_slice_from_array(bytes), NULL);
+	decode_string_hex("e9e3f2787211f2d9ca024380e747925626c0df46a734a4e0a9f4d92b8d021441"
+		, SHA256_STRING_LENGTH, bytes, sizeof(bytes));
+	const uint32_t ptr_final = honas_state_check_host_name_lookups(&first_state
+		, byte_slice_from_array(bytes), NULL);
 
 	ck_assert_int_gt(d1_final, 0);
 	ck_assert_int_gt(d2_final, 0);
 	ck_assert_int_gt(d3_final, 0);
 	ck_assert_int_gt(d4_final, 0);
 	ck_assert_int_gt(d5_final, 0);
+	ck_assert_int_gt(ptr_final, 0);
 
 	// Destroy the states.
 	honas_state_destroy(&first_state);
