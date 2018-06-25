@@ -102,6 +102,7 @@ struct capture
 	struct event*			ev_dry_run_daily;
 	struct dry_run_counters		dry_run_data;
 	bool				fpr_warning_passed;
+	struct event*			ev_state_rotation;
 };
 
 // Global instance of capture context structure.
@@ -385,6 +386,9 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 					char* class_str = ldns_rr_class2str(qclass);
 					char* type_str = ldns_rr_type2str(qtype);
 
+					// Debug which domain names are stored.
+					log_msg(DEBUG, "%s stored in Bloom filter!");
+
 					// Store the DNS query in the Bloom filters.
 					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length
 						, in == 1 ? (uint8_t*)hn_buf : NULL, in == 1 ? strlen((char*)hn_buf) : 0, ctx.dry_run ? &ctx.dry_run_data : NULL
@@ -493,7 +497,10 @@ static void process_data_frame(struct connection* conn)
 
 	// Decode the frame as DNStap.
 	Dnstap__Dnstap *d = dnstap__dnstap__unpack(NULL, bytes_read, buf);
-	if (d)
+
+	// Check if both the unpacked data is valid, and if the unpacked data
+	// actually contains a valid message.
+	if (d && d->message)
 	{
 		// Try to decode the DNStap message.
 		if (!decode_dnstap_message(d->message))
@@ -942,27 +949,6 @@ static void shutdown_handler(int signum __attribute__((unused)))
 	event_base_loopexit(ctx.ev_base, NULL);
 }
 
-// The signal reload/recheck handler.
-static void recheck_handler(int signum __attribute__((unused)))
-{
-	const uint64_t now = time(NULL);
-	const int64_t wait = current_active_state.header->period_end - now;
-	if (wait <= 0)
-	{
-		// Finalize current state, reload config and create new current state
-		finalize_state(&current_active_state);
-		load_gather_config(&config, init_dirfd, config_file);
-		create_state(&config, &current_active_state, now);
-
-		// Reset the false positive rate threshold warning.
-		ctx.fpr_warning_passed = false;
-	}
-
-	// Schedule alarm to recheck some time in the future.
-	// We recheck at least once per minute to handle possible clock changes.
-	alarm(MIN(wait, 60U));
-}
-
 // Sets up signal handlers.
 static bool setup_signal_handlers()
 {
@@ -983,17 +969,6 @@ static bool setup_signal_handlers()
 		return false;
 	}
 	if (sigaction(SIGQUIT, &sa, NULL) != 0)
-	{
-		return false;
-	}
-
-	// Create a new signal handler for reload/recheck signals.
-	struct sigaction sa_rel = { .sa_handler = recheck_handler };
-	if (sigaction(SIGALRM, &sa_rel, NULL) != 0)
-	{
-		return false;
-	}
-	if (sigaction(SIGHUP, &sa_rel, NULL) != 0)
 	{
 		return false;
 	}
@@ -1213,7 +1188,7 @@ static void init_dry_run_dumps(struct event_base* base)
 	}
 
 	// Add dry run instrumentation event for hourly dumps.
-	struct timeval hourly = { 3660, 0 };
+	struct timeval hourly = { 3600, 0 };
 	ctx.ev_dry_run_hourly = event_new(base, -1, EV_PERSIST, dry_run_hourly_event, &ctx.dry_run_data);
 	event_add(ctx.ev_dry_run_hourly, &hourly);
 
@@ -1282,6 +1257,25 @@ static void dry_run_advice()
 	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
 
 	fprintf(dryrun_fd, "-------------------------------------- End -------------------------------------\n");
+}
+
+// The signal reload/recheck handler.
+static void recheck_handler(evutil_socket_t fd, short what, void *arg)
+{
+	honas_state_t* state_param = (honas_state_t*)arg;
+
+	const uint64_t now = time(NULL);
+	const int64_t wait = state_param->header->period_end - now;
+	if (wait <= 0)
+	{
+		// Finalize current state, reload config and create new current state
+		finalize_state(state_param);
+		load_gather_config(&config, init_dirfd, config_file);
+		create_state(&config, state_param, now);
+
+		// Reset the false positive rate threshold warning.
+		ctx.fpr_warning_passed = false;
+	}
 }
 
 // The Honas gather entrypoint.
@@ -1405,7 +1399,7 @@ int main(int argc, char** argv)
 	}
 
 	// Start up the state rotation process. The recheck handler will schedule alarms.
-	recheck_handler(0);
+	recheck_handler(0, 0, &current_active_state);
 
 	// Log a warning about the filter size if applicable.
 	const uint32_t req_entropy = honas_state_calculate_required_entropy(&current_active_state);
@@ -1424,6 +1418,11 @@ int main(int argc, char** argv)
 	{
 		log_msg(INFO, "Initialized DNStap input!");
 	}
+
+	// Add a recurring event each minute to perform state rotation.
+	struct timeval each_minute = { 60, 0 };
+	ctx.ev_state_rotation = event_new(ctx.ev_base, -1, EV_PERSIST, recheck_handler, &current_active_state);
+	event_add(ctx.ev_state_rotation, &each_minute);
 
 	// Initialize Honas instrumentation.
 	init_instrumentation(ctx.ev_base);
@@ -1467,6 +1466,12 @@ int main(int argc, char** argv)
 	// Unlink socket file.
 	log_msg(INFO, "Unlinking socket file %s...", UNIX_SOCKET_PATH);
 	unlink(UNIX_SOCKET_PATH);
+
+	// Free the state rotation event.
+	if (ctx.ev_state_rotation)
+	{
+		event_free(ctx.ev_state_rotation);
+	}
 
 	// Clean up and finalize instrumentation.
 	finalize_instrumentation();
