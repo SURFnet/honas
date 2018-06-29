@@ -1133,6 +1133,84 @@ static void dry_run_destroy()
 	}
 }
 
+// Rounds a number up to the nearest multiple.
+static unsigned long roundUp(const unsigned long numToRound, const unsigned long multiple)
+{
+    if (multiple == 0)
+        return numToRound;
+
+    unsigned long remainder = numToRound % multiple;
+    if (remainder == 0)
+        return numToRound;
+
+    return numToRound + multiple - remainder;
+}
+
+// Gives advice based on the information collected in a dry run.
+static void dry_run_advice()
+{
+	char date_str[256];
+
+	// Store the current maxima.
+	ctx.dry_run_data.hourly_maximum = max(ctx.dry_run_data.hourly_maximum, hllCount(&ctx.dry_run_data.hourly_global, NULL));
+	ctx.dry_run_data.daily_maximum = max(ctx.dry_run_data.daily_maximum, hllCount(&ctx.dry_run_data.daily_global, NULL));
+
+	time_t hour = time(NULL);
+	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&hour));
+
+	fprintf(dryrun_fd, "------------------------------------ Advice ------------------------------------\n");
+	fprintf(dryrun_fd, "[%s] The numbers are rounded up to the nearest hundred-thousand, and a tolerance of 10 percent is added.\n", date_str);
+	fprintf(dryrun_fd, "-------------------------------- Hourly Filters --------------------------------\n");
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
+	unsigned long m = roundUp(bloom_filter_size((double)1 / (double)1000, ctx.dry_run_data.hourly_maximum), 100000);
+	unsigned long k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
+	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 1000, BF size (m) should be %lu, based on %llu unique domain names\n"
+		, date_str, (unsigned long)(m * 1.1), ctx.dry_run_data.hourly_maximum);
+	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/10000.
+	m = roundUp(bloom_filter_size((double)1 / (double)10000, ctx.dry_run_data.hourly_maximum), 100000);
+	k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
+	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 10000, BF size (m) should be %lu, based on %llu unique domain names\n"
+		, date_str, (unsigned long)(m * 1.1), ctx.dry_run_data.hourly_maximum);
+	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/100000.
+	m = roundUp(bloom_filter_size((double)1 / (double)100000, ctx.dry_run_data.hourly_maximum), 100000);
+	k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
+	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 100000, BF size (m) should be %lu, based on %llu unique domain names\n"
+		, date_str, (unsigned long)(m * 1.1), ctx.dry_run_data.hourly_maximum);
+	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
+
+	fprintf(dryrun_fd, "-------------------------------- Daily Filters ---------------------------------\n");
+	time_t day = time(NULL);
+	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&day));
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
+	m = roundUp(bloom_filter_size((double)1 / (double)1000, ctx.dry_run_data.daily_maximum), 100000);
+	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
+	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 1000, BF size (m) should be %lu, based on %llu unique domain names\n"
+		, date_str, (unsigned long)(m * 1.1), ctx.dry_run_data.daily_maximum);
+	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/10000.
+	m = roundup(bloom_filter_size((double)1 / (double)10000, ctx.dry_run_data.daily_maximum), 100000);
+	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
+	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 10000, BF size (m) should be %lu, based on %llu unique domain names\n"
+		, date_str, (unsigned long)(m * 1.1), ctx.dry_run_data.daily_maximum);
+	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
+
+	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/100000.
+	m = roundUp(bloom_filter_size((double)1 / (double)100000, ctx.dry_run_data.daily_maximum), 100000);
+	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
+	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 100000, BF size (m) should be %lu, based on %llu unique domain names\n"
+		, date_str, (unsigned long)(m * 1.1), ctx.dry_run_data.daily_maximum);
+	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
+
+	fprintf(dryrun_fd, "-------------------------------------- End -------------------------------------\n");
+}
+
 // The dry run instrumentation event function for hourly dumps.
 static void dry_run_hourly_event(evutil_socket_t fd, short what, void *arg)
 {
@@ -1154,6 +1232,14 @@ static void dry_run_hourly_event(evutil_socket_t fd, short what, void *arg)
 	hllDestroy(&data->hourly_global);
 	hllInit(&data->hourly_global);
 	data->hourly_total_queries = 0;
+
+	// Check if the daily midnight dump should be performed.
+	struct tm current_time;
+	if (gmtime_r(&hour, &current_time)->tm_hour == 0)
+	{
+		// Dump the current advice.
+		dry_run_advice();
+	}
 }
 
 // The dry run instrumentation event function for daily dumps.
@@ -1203,63 +1289,6 @@ static void init_dry_run_dumps(struct event_base* base)
 	// Initialize HyperLogLog counters.
 	hllInit(&ctx.dry_run_data.hourly_global);
 	hllInit(&ctx.dry_run_data.daily_global);
-}
-
-// Gives advice based on the information collected in a dry run.
-static void dry_run_advice()
-{
-	char date_str[256];
-
-	// Store the current maxima.
-	ctx.dry_run_data.hourly_maximum = max(ctx.dry_run_data.hourly_maximum, hllCount(&ctx.dry_run_data.hourly_global, NULL));
-	ctx.dry_run_data.daily_maximum = max(ctx.dry_run_data.daily_maximum, hllCount(&ctx.dry_run_data.daily_global, NULL));
-
-	fprintf(dryrun_fd, "------------------------------------ Advice ------------------------------------\n");
-	fprintf(dryrun_fd, "-------------------------------- Hourly Filters --------------------------------\n");
-	time_t hour = time(NULL);
-	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&hour));
-
-	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
-	unsigned long m = bloom_filter_size((double)1 / (double)1000, ctx.dry_run_data.hourly_maximum);
-	unsigned long k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
-	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 1000, BF size (m) should be %lu, based on %llu unique domain names\n", date_str, m, ctx.dry_run_data.hourly_maximum);
-	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
-
-	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/10000.
-	m = bloom_filter_size((double)1 / (double)10000, ctx.dry_run_data.hourly_maximum);
-	k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
-	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 10000, BF size (m) should be %lu, based on %llu unique domain names\n", date_str, m, ctx.dry_run_data.hourly_maximum);
-	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
-
-	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/100000.
-	m = bloom_filter_size((double)1 / (double)100000, ctx.dry_run_data.hourly_maximum);
-	k = optimal_k(ctx.dry_run_data.hourly_maximum, m);
-	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 100000, BF size (m) should be %lu, based on %llu unique domain names\n", date_str, m, ctx.dry_run_data.hourly_maximum);
-	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
-
-	fprintf(dryrun_fd, "-------------------------------- Daily Filters ---------------------------------\n");
-	time_t day = time(NULL);
-	strftime(date_str, sizeof(date_str), "%d-%m-%Y %H:%M", localtime(&day));
-
-	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/1000.
-	m = bloom_filter_size((double)1 / (double)1000, ctx.dry_run_data.daily_maximum);
-	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
-	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 1000, BF size (m) should be %lu, based on %llu unique domain names\n", date_str, m, ctx.dry_run_data.daily_maximum);
-	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
-
-	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/10000.
-	m = bloom_filter_size((double)1 / (double)10000, ctx.dry_run_data.daily_maximum);
-	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
-	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 10000, BF size (m) should be %lu, based on %llu unique domain names\n", date_str, m, ctx.dry_run_data.daily_maximum);
-	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
-
-	// Calculate the Bloom filter size and number of hash functions for a false positive rate of 1/100000.
-	m = bloom_filter_size((double)1 / (double)100000, ctx.dry_run_data.daily_maximum);
-	k = optimal_k(ctx.dry_run_data.daily_maximum, m);
-	fprintf(dryrun_fd, "[%s] For a false positive rate of 1 / 100000, BF size (m) should be %lu, based on %llu unique domain names\n", date_str, m, ctx.dry_run_data.daily_maximum);
-	fprintf(dryrun_fd, "[%s] The number of hash functions (k) should be %lu\n", date_str, k);
-
-	fprintf(dryrun_fd, "-------------------------------------- End -------------------------------------\n");
 }
 
 // The signal reload/recheck handler.

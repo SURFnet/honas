@@ -80,6 +80,8 @@ void instrumentation_increment_type(struct instrumentation* p_inst, const ldns_r
 			case LDNS_RR_TYPE_MX:
 			++p_inst->n_mx_queries;
 				break;
+			case LDNS_RR_TYPE_PTR:
+			++p_inst->n_ptr_queries;
 			default:
 				break;
 		}
@@ -102,10 +104,10 @@ void instrumentation_dump(struct instrumentation* p_inst, char* const out_str, c
 		p_inst->memory_usage_kb = r_usage.ru_maxrss;
 
 		// Dump the instrumentation data to a structured single-line string.
-		snprintf(out_str, str_length, "Instrumentation: n_proc=%zu,n_acc=%zu,n_skip=%zu,n_qsec=%zu,n_qa=%zu,n_qaaaa=%zu,n_qns=%zu,n_qmx=%zu,mem_usg_kb=%zu,n_qcat=%zu,n_qncat=%zu,n_invfrm=%zu\n"
+		snprintf(out_str, str_length, "Instrumentation: n_proc=%zu,n_acc=%zu,n_skip=%zu,n_qsec=%zu,n_qa=%zu,n_qaaaa=%zu,n_qns=%zu,n_qmx=%zu,n_qptr=%zu,mem_usg_kb=%zu,n_qcat=%zu,n_qncat=%zu,n_invfrm=%zu\n"
 			, p_inst->n_processed_queries, p_inst->n_accepted_queries, p_inst->n_skipped_queries
 			, p_inst->n_queries_sec, p_inst->n_a_queries, p_inst->n_aaaa_queries
-			, p_inst->n_ns_queries, p_inst->n_mx_queries, p_inst->memory_usage_kb
+			, p_inst->n_ns_queries, p_inst->n_mx_queries, p_inst->n_ptr_queries, p_inst->memory_usage_kb
 			, p_inst->subnet_aggregates.n_queries_in_subnet, p_inst->subnet_aggregates.n_queries_not_in_subnet
 			, p_inst->n_invalid_frames);
 	}
@@ -124,6 +126,7 @@ void instrumentation_reset(struct instrumentation* p_inst)
 		p_inst->n_aaaa_queries = 0;
 		p_inst->n_ns_queries = 0;
 		p_inst->n_mx_queries = 0;
+		p_inst->n_ptr_queries = 0;
 		p_inst->subnet_aggregates.n_queries_in_subnet = 0;
 		p_inst->subnet_aggregates.n_queries_not_in_subnet = 0;
 		p_inst->n_invalid_frames = 0;

@@ -68,6 +68,27 @@ static void honas_state_init_common(honas_state_t* state)
 	assert(state->size >= sizeof(struct honas_state_file_header));
 	assert(state->header != NULL);
 	assert(state->filters == NULL);
+
+	log_msg(ERR, "First filter offset: %zu, padding after filters: %zu, number of filters: %zu, size (m): %zu, client hll size: %zu, hll padding: %zu, hostname_hll_size: %zu, padding_after_hostname_hll: %zu. state size: %zu, all together: %zu",
+		state->header->first_filter_offset,
+		state->header->padding_after_filters,
+		state->header->number_of_filters,
+		state->header->number_of_bits_per_filter,
+		state->header->client_hll_size,
+		state->header->padding_after_client_hll,
+		state->header->host_name_hll_size,
+		state->header->padding_after_host_name_hll,
+		state->size
+		, honas_state_file_size(
+                                                          state->header->first_filter_offset,
+                                                          state->header->padding_after_filters,
+                                                          state->header->number_of_filters,
+                                                          state->header->number_of_bits_per_filter,
+                                                          state->header->client_hll_size,
+                                                          state->header->padding_after_client_hll,
+                                                          state->header->host_name_hll_size,
+                                                          state->header->padding_after_host_name_hll));
+
 	assert(state->size >= honas_state_file_size(
 							  state->header->first_filter_offset,
 							  state->header->padding_after_filters,

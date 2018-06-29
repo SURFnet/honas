@@ -73,6 +73,9 @@ struct instrumentation
 	// Specifies the number of MX queries.
 	size_t				n_mx_queries;
 
+	// Specifies the number of PTR queries.
+	size_t				n_ptr_queries;
+
 	// Specifies the current memory usage of the process in kilobytes.
 	size_t				memory_usage_kb;
 

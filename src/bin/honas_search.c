@@ -39,6 +39,18 @@
 #define READ_BLOCK_SIZE 65536
 #define SHA256_DIGEST_LENGTH 32
 
+// Compute the fill rate of a Bloom filter, given s and m.
+static const double bloom_fill_rate(const uint32_t s, const uint32_t m)
+{
+        return (double)s / (double)m;
+}
+
+// Compute the actual false positive rate of a Bloom filter, given s, m and k.
+static const double bloom_actual_fpr(const double fr, const uint32_t k)
+{
+        return pow(fr, (double)k);
+}
+
 static bool _decode_nibble(char c, int* r)
 {
 	if (c >= '0' && c <= '9') {
@@ -103,6 +115,12 @@ static void add_general_information(honas_state_t* state, json_printer_t* printe
 		json_printer_object_begin(printer);
 		json_printer_object_pair_uint32(printer, "number_of_bits_set", state->filter_bits_set[i]);
 		json_printer_object_pair_uint32(printer, "estimated_number_of_host_names", bloom_approx_count(filter_size, state->header->number_of_hashes, state->filter_bits_set[i]));
+
+		// Calculate and print the actual false positive rate of this Bloom filter.
+		char fprstr[64];
+		const double act_fpr = bloom_actual_fpr(bloom_fill_rate(state->filter_bits_set[i], state->header->number_of_bits_per_filter), state->header->number_of_hashes);
+		snprintf(fprstr, sizeof(fprstr), "%.10f", act_fpr);
+		json_printer_object_pair_string(printer, "actual_false_positive_rate", fprstr);
 		json_printer_object_end(printer);
 	}
 	json_printer_array_end(printer);
