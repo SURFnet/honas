@@ -38,6 +38,16 @@
 #error The currrent implementation only works properly on a little endian machine!
 #endif
 
+static size_t round_up_to_factor_of_two(size_t value, size_t factor_of_two)
+{
+	return (value + (1 << factor_of_two) - 1) & (~((1 << factor_of_two) - 1));
+}
+
+static uint64_t uint64_hash(const byte_slice_t data)
+{
+	return byte_slice_MurmurHash64A(data, 0xadc83b19ULL);
+}
+
 static size_t honas_state_file_size(uint32_t first_filter_offset, uint32_t padding_after_filters, uint32_t number_of_filters, uint32_t number_of_bits_per_filter, uint32_t client_hll_size, uint32_t padding_after_client_hll, uint32_t host_name_hll_size, uint32_t padding_after_host_name_hll)
 {
 	assert(number_of_filters > 0);
@@ -52,16 +62,6 @@ static size_t honas_state_file_size(uint32_t first_filter_offset, uint32_t paddi
 		+ host_name_hll_size + padding_after_host_name_hll;
 }
 
-static size_t round_up_to_factor_of_two(size_t value, size_t factor_of_two)
-{
-	return (value + (1 << factor_of_two) - 1) & (~((1 << factor_of_two) - 1));
-}
-
-static uint64_t uint64_hash(const byte_slice_t data)
-{
-	return byte_slice_MurmurHash64A(data, 0xadc83b19ULL);
-}
-
 static void honas_state_init_common(honas_state_t* state)
 {
 	assert(state->mmap != NULL);
@@ -70,34 +70,12 @@ static void honas_state_init_common(honas_state_t* state)
 	assert(state->filters == NULL);
 
 	log_msg(ERR, "First filter offset: %zu, padding after filters: %zu, number of filters: %zu, size (m): %zu, client hll size: %zu, hll padding: %zu, hostname_hll_size: %zu, padding_after_hostname_hll: %zu. state size: %zu, all together: %zu",
-		state->header->first_filter_offset,
-		state->header->padding_after_filters,
-		state->header->number_of_filters,
-		state->header->number_of_bits_per_filter,
-		state->header->client_hll_size,
-		state->header->padding_after_client_hll,
-		state->header->host_name_hll_size,
-		state->header->padding_after_host_name_hll,
-		state->size
-		, honas_state_file_size(
-                                                          state->header->first_filter_offset,
-                                                          state->header->padding_after_filters,
-                                                          state->header->number_of_filters,
-                                                          state->header->number_of_bits_per_filter,
-                                                          state->header->client_hll_size,
-                                                          state->header->padding_after_client_hll,
-                                                          state->header->host_name_hll_size,
-                                                          state->header->padding_after_host_name_hll));
+		state->header->first_filter_offset, state->header->padding_after_filters, state->header->number_of_filters, state->header->number_of_bits_per_filter, state->header->client_hll_size, state->header->padding_after_client_hll,
+		state->header->host_name_hll_size, state->header->padding_after_host_name_hll, state->size , honas_state_file_size(state->header->first_filter_offset, state->header->padding_after_filters, state->header->number_of_filters,
+                                                          state->header->number_of_bits_per_filter, state->header->client_hll_size, state->header->padding_after_client_hll, state->header->host_name_hll_size, state->header->padding_after_host_name_hll));
 
-	assert(state->size >= honas_state_file_size(
-							  state->header->first_filter_offset,
-							  state->header->padding_after_filters,
-							  state->header->number_of_filters,
-							  state->header->number_of_bits_per_filter,
-							  state->header->client_hll_size,
-							  state->header->padding_after_client_hll,
-							  state->header->host_name_hll_size,
-							  state->header->padding_after_host_name_hll));
+	assert(state->size >= honas_state_file_size(state->header->first_filter_offset, state->header->padding_after_filters, state->header->number_of_filters, state->header->number_of_bits_per_filter, state->header->client_hll_size,
+							  state->header->padding_after_client_hll, state->header->host_name_hll_size, state->header->padding_after_host_name_hll));
 
 	state->filters = (byte_slice_t*)calloc(state->header->number_of_filters, sizeof(byte_slice_t));
 	log_passert(state->filters != NULL, "Failed to allocation honas state filters");
@@ -136,7 +114,7 @@ int honas_state_create(honas_state_t* state, uint32_t number_of_filters, uint32_
 	uint32_t padding_after_client_hll = round_up_to_factor_of_two(HLL_DENSE_SIZE, PAGE_SHIFT) - HLL_DENSE_SIZE;
 	uint32_t padding_after_host_name_hll = round_up_to_factor_of_two(HLL_DENSE_SIZE, PAGE_SHIFT) - HLL_DENSE_SIZE;
 
-	state->size = honas_state_file_size(first_filter_offset, 0, number_of_filters, number_of_bits_per_filter, HLL_DENSE_SIZE, padding_after_client_hll, HLL_DENSE_SIZE, padding_after_host_name_hll);
+	state->size = honas_state_file_size(first_filter_offset, padding_after_filters, number_of_filters, number_of_bits_per_filter, HLL_DENSE_SIZE, padding_after_client_hll, HLL_DENSE_SIZE, padding_after_host_name_hll);
 	if ((state->mmap = mmap(NULL, state->size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED)
 		goto err_out;
 
