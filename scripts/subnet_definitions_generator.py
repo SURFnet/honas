@@ -73,3 +73,7 @@ else:
 		print(json_output, file=outfile)
 		print("Wrote JSON output to " + outfilename)
 
+# Output all entities found on in a one-row CSV file.
+with open("entities_out.csv", "w") as out_entities_file:
+	for k, v in input_entities.items():
+		out_entities_file.write(k + '\n')

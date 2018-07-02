@@ -33,12 +33,7 @@ searchdata["groups"][0]["hostnames"] = {}
 # For convinience we store the number of times it occurred as value.
 srcips = {}
 
-resolv = dns.resolver.Resolver()
-resolv.nameservers = [ "194.104.0.53", "145.220.0.53", "2001:678:230:2194:194:104:0:53", "2001:67c:6ec:201:145:220:0:53" ]
-resolv.timeout = 1
-resolv.lifetime = 1
-
-# Read the Booter blacklist file.
+# Read the spamfilter file.
 with open(spamfilterfile, "r") as inpfile:
 	reader = csv.reader(inpfile, delimiter=' ')
 	for row in reader:
@@ -51,31 +46,17 @@ with open(spamfilterfile, "r") as inpfile:
 		else:
 			srcips[ipaddr] = 1
 
-counter = 0
-totalcount = len(srcips)
 # Perform reverse lookups for the domain names.
 for k, v in srcips.items():
 	try:
-		# Perform a reverse DNS lookup for the IP address.
-		n = dns.reversename.from_address(k)
-		answers = resolv.query(n, "PTR")
+		# Create the reverse DNS lookup for the IP address.
+		n = str(dns.reversename.from_address(k)).rstrip('.')
 
 		# Create Honas JSON query for this domain name.
-		searchdata["groups"][0]["hostnames"][str(answers[0])] = sha256(str(answers[0])).hexdigest()
-	except dns.exception.Timeout:
-		print("Failed to look up PTR record for " + k + "! Timeout expired.")
-	except dns.resolver.NXDOMAIN:
-		print("Failed to look up PTR record for " + k + "! Returned NXDOMAIN.")
-	except dns.resolver.NoAnswer:
-		print("Failed to look up PTR record for " + k + "! No answer returned.")
-	except dns.resolver.NoNameservers:
-		print("Failed to look up PTR record for " + k + "! No Nameservers.")
-	except dns.exception.SyntaxError:
-		print("Failed to look up PTR record for " + k + "! Invalid IP-address input.")
+		searchdata["groups"][0]["hostnames"][n] = sha256(n).hexdigest()
 
-	# Print progress.
-	counter = counter + 1
-	print("Resolving: [" + str(counter) + "/" + str(totalcount) + "]")
+	except dns.exception.SyntaxError:
+		print("Failed to parse " + k + "! Skipping.")
 
 # Print statistics.
 print("Processed " + str(len(srcips)) + " IP addresses.")
