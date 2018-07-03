@@ -13,6 +13,7 @@ import dns.resolver
 
 HONAS_STATE_DIR = "/var/spool/honas"
 HONAS_BIN_PATH = "/home/gijs/honas/build/honas-search"
+ENTITY_FILE = "entities_out.csv"
 
 # Check if we have an input file containing spamfilter records.
 spamfilterfile = ""
@@ -46,20 +47,43 @@ with open(spamfilterfile, "r") as inpfile:
 		else:
 			srcips[ipaddr] = 1
 
+# Print statistics.
+print("Processed " + str(len(srcips)) + " IP addresses.")
+
+# Read all entities in a dictionary if possible.
+entities = {}
+with open(ENTITY_FILE, 'r') as entity_file:
+	entity_reader = csv.reader(entity_file)
+	for row in entity_reader:
+		ent_str = row[0]
+		if ent_str in entities:
+			entities[ent_str] += 1
+		else:
+			entities[ent_str] = 1
+
 # Perform reverse lookups for the domain names.
+q_count = 0
 for k, v in srcips.items():
 	try:
 		# Create the reverse DNS lookup for the IP address.
 		n = str(dns.reversename.from_address(k)).rstrip('.')
+		q_count += 1
 
 		# Create Honas JSON query for this domain name.
 		searchdata["groups"][0]["hostnames"][n] = sha256(n).hexdigest()
+
+		# Iterate through all entities in the entities file, and generate
+		# a query for every combination of domain name and entity.
+		for k1, v1 in entities.items():
+			compound = str(k1) + '@' + n
+			searchdata["groups"][0]["hostnames"][compound] = sha256(compound).hexdigest()
+			q_count += 1
 
 	except dns.exception.SyntaxError:
 		print("Failed to parse " + k + "! Skipping.")
 
 # Print statistics.
-print("Processed " + str(len(srcips)) + " IP addresses.")
+print("Generated " + str(q_count) + " queries.")
 
 # Write the Honas JSON query to a temporary file.
 tmpfilename = "honas_tmp_query.json"

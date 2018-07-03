@@ -28,7 +28,7 @@ prefix_count = 0
 
 # Open the input file and read in the mappings.
 try:
-	with open(results.input_file, 'r', encoding='UTF-8', newline='') as infile:
+	with open(results.input_file, 'r', encoding='utf-8', newline='') as infile:
 		reader = csv.DictReader(infile)
 
 		# Read out all rows from the input mapping file.
@@ -63,13 +63,13 @@ for e, v in input_entities.items():
 	# Add entity to the JSON data.
 	json_data["subnet_activity"].append({ "entity" : e, "prefixes" : associated_prefixes })
 
-# Generate JSON from input.
-json_output = json.dumps(json_data)
+# Generate JSON from input (Extra argument to avoid ASCII encoding).
+json_output = json.dumps(json_data, ensure_ascii=False)
 if outfilename is None:
 	print(json_output)
 else:
 	# Open the output file for JSON generation.
-	with open(outfilename, 'w') as outfile:
+	with open(outfilename, 'w', encoding='utf-8') as outfile:
 		print(json_output, file=outfile)
 		print("Wrote JSON output to " + outfilename)
 

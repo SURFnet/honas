@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # ---------------------------------------------
-# Query tool to find NDN IoCs in Honas Bloom
-# filters.
+# Query tool to create Honas queries from a
+# list of Booter record queries.
 # ---------------------------------------------
 
 import sys
@@ -14,55 +14,55 @@ HONAS_STATE_DIR = "/var/spool/honas"
 HONAS_BIN_PATH = "/home/gijs/honas/build/honas-search"
 ENTITY_FILE = "entities_out.csv"
 
-# Check if we have an input domain names file.
-ndnfile = ""
+# Check if we have an input file containing Booter domain names.
+booterfile = ""
 if len(sys.argv) > 1:
-	ndnfile = sys.argv[1]
+	booterfile = sys.argv[1]
 else:
-	print("Please enter a domain name file as first argument!")
+	print("Please enter a Booter file as first argument!")
 	exit()
 
-print("Processing DNS queries from input domain name file.")
+print("Processing domain names from input Booter file.")
 
 # Prepare Honas search query.
 searchdata = { "groups" : [] }
 searchdata["groups"].append({ "id" : 1 })
 searchdata["groups"][0]["hostnames"] = {}
 
-# Prepare a dictionary containing all unique domain names in the domain names file.
+# Prepare a dictionary containing all unique Booter domain names.
 # For convinience we store the number of times it occurred as value.
-srcdomains = {}
+booters = {}
 
-# Read the domain names file.
-with open(ndnfile, "r") as inpfile:
+# Read the spamfilter file.
+with open(booterfile, "r") as inpfile:
 	reader = csv.reader(inpfile)
 	for row in reader:
-		dnsname = row[0].lower()
+		booter = row[0].strip()
 
 		# Store the domain name in the dictionary for comparison later.
-		# First canonicalize the domain name! We need it to be in lower case.
-		if dnsname in srcdomains:
-			srcdomains[dnsname] += 1
+		# This way we remove the duplicates, which reduces lookup time.
+		if booter in booters:
+			booters[booter] += 1
 		else:
-			srcdomains[dnsname] = 1
+			booters[booter] = 1
 
 # Print statistics.
-print("Processed " + str(len(srcdomains)) + " Booter domain names.")
+print("Processed " + str(len(booters)) + " Booter domain names.")
 
 # Read all entities in a dictionary if possible.
 entities = {}
 with open(ENTITY_FILE, 'r') as entity_file:
-        entity_reader = csv.reader(entity_file)
-        for row in entity_reader:
-                ent_str = row[0]
-                if ent_str in entities:
-                        entities[ent_str] += 1
-                else:
-                        entities[ent_str] = 1
+	entity_reader = csv.reader(entity_file)
+	for row in entity_reader:
+		ent_str = row[0]
+		if ent_str in entities:
+			entities[ent_str] += 1
+		else:
+			entities[ent_str] = 1
 
-# Process the domain names and generate a Honas query file.
+# Insert Booter queries in Honas search query.
 q_count = 0
-for k, v in srcdomains.items():
+for k, v in booters.items():
 	# Create Honas JSON query for this domain name.
 	searchdata["groups"][0]["hostnames"][k] = sha256(k).hexdigest()
 	q_count += 1
