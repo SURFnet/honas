@@ -82,7 +82,7 @@ for ts, pkt in dpkt.pcap.Reader(f):
 # Write the Honas JSON query to a temporary file.
 tmpfilename = "honas_tmp_query.json"
 with open(tmpfilename, 'w') as tmpfile:
-	tmpfile.write(json.dumps(searchdata, indent=4))
+	tmpfile.write(json.dumps(searchdata, indent=4, ensure_ascii=False))
 
 # Execute the query to Honas.
 statefile = "/var/spool/honas/active_state"
