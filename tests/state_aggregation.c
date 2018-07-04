@@ -200,12 +200,19 @@ START_TEST(test_aggregate_states)
 	const uint32_t ptr_final = honas_state_check_host_name_lookups(&first_state
 		, byte_slice_from_array(bytes), NULL);
 
+	// Test if a non-existent domain name is not part of the aggregated states.
+	ck_assert(decode_string_hex("1f0656859604697f6809364911d853c390baa8ab76994b4f041d9c301ff5e615"
+		, SHA256_STRING_LENGTH, bytes, sizeof(bytes)));
+	const uint32_t ptr_ne_final = honas_state_check_host_name_lookups(&first_state
+		, byte_slice_from_array(bytes), NULL);
+
 	ck_assert_int_gt(d1_final, 0);
 	ck_assert_int_gt(d2_final, 0);
 	ck_assert_int_gt(d3_final, 0);
 	ck_assert_int_gt(d4_final, 0);
 	ck_assert_int_gt(d5_final, 0);
 	ck_assert_int_gt(ptr_final, 0);
+	ck_assert_int_eq(ptr_ne_final, 0);
 
 	// Destroy the states.
 	honas_state_destroy(&first_state);

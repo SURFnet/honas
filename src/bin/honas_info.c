@@ -118,7 +118,7 @@ int main(int argc, char** argv)
 	/* Parse command line arguments */
 	while (1) {
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "h", long_options, &option_index);
+		int c = getopt_long(argc, argv, "hvq", long_options, &option_index);
 		if (c == -1)
 			break;
 		switch (c) {

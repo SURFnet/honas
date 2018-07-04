@@ -33,7 +33,8 @@
 
 static void show_usage(char* program_name, FILE* out)
 {
-	fprintf(out, "Usage: %s [<options>] <state-file-1> <...> <state-file-n>\n\n", program_name);
+	// At most 32 state files.
+	fprintf(out, "Usage: %s [<options>] <dst-state-file> <src-state-file>\n\n", program_name);
 	fprintf(out, "Options:\n");
 	fprintf(out, "  -h|--help           Show this message\n");
 	fprintf(out, "  -q|--quiet          Be more quiet (can be used multiple times)\n");
@@ -50,14 +51,17 @@ static const struct option long_options[] = {
 int main(int argc, char** argv)
 {
 	char* program_name = "honas-combine";
-	char* state_files[32] = { 0 };
-	unsigned int state_file_count = 0;
-	honas_state_t states[32] = { 0 };
+	char* dst_state_filename = NULL;
+	char* src_state_filename = NULL;
+	honas_state_t dst_state = { 0 };
+	honas_state_t src_state = { 0 };
+
+	log_msg(INFO, "%s (version %s)", program_name, VERSION);
 
 	/* Parse command line arguments */
 	while (1) {
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "h", long_options, &option_index);
+		int c = getopt_long(argc, argv, "hvq", long_options, &option_index);
 		if (c == -1)
 			break;
 		switch (c) {
@@ -90,79 +94,82 @@ int main(int argc, char** argv)
 	// Provide an error when the state files are missing.
 	if (optind == argc)
 	{
-		fprintf(stderr, "Required '<state-file-?>' arguments missing!\n");
+		log_msg(ERR, "Required '<dst-state-file>' arguments missing!");
 		return 1;
 	}
 
-	// We must have at least two state files to combine.
+	// We must have a destination and source state file to combine.
 	if (argc - optind < 2)
 	{
-		fprintf(stderr, "At least two state files are required!\n");
+		log_msg(ERR, "A destination and source state file are required!");
 		return 1;
 	}
 
-	// Get all state filenames (at most 32).
-	int i = 0;
-	while (i < argc - optind)
+	// Store the state filenames.
+	dst_state_filename = malloc(strlen(argv[optind]));
+	src_state_filename = malloc(strlen(argv[optind + 1]));
+	if (!dst_state_filename || !src_state_filename)
 	{
-		state_files[i] = malloc(strlen(argv[i + optind]));
-		strcpy(state_files[i], argv[i + optind]);
-		++i;
+		log_msg(ERR, "Failed to allocate memory for the state filenames.");
+		return 1;
 	}
-	state_file_count = i;
 
-	log_msg(INFO, "%s (version %s)", program_name, VERSION);
+	strcpy(dst_state_filename, argv[optind++]);
+	strcpy(src_state_filename, argv[optind]);
 
-	// Were any state files provided?
-	if (state_file_count)
+	// Load destination state file.
+	if (honas_state_load(&dst_state, dst_state_filename, false) == -1)
 	{
-		// Try to load all the state files.
-		bool failed = false;
-		for (unsigned int i = 0; i < state_file_count; ++i)
-		{
-			/* Load Honas state file */
-			if (honas_state_load(&states[i], state_files[i], true) == -1)
-			{
-				fprintf(stderr, "Error while loading state file '%s': %s!\n", state_files[i], strerror(errno));
-				failed = true;
-				break;
-			}
-		}
-
-		// If all state files were loaded correctly, we can proceed.
-		if (!failed)
-		{
-			// Combine all filters with the 'target' one, which is the first argument.
-			for (unsigned int i = 1; i < state_file_count; ++i)
-			{
-				// Aggregate data from both the target and source filters.
-				if (honas_state_aggregate_combine(&states[0], &states[i]))
-				{
-					log_msg(INFO, "Aggregated states %s and %s!", state_files[0], state_files[i]);
-				}
-				else
-				{
-					log_msg(ERR, "Failed to aggregate states %s and %s!", state_files[0], state_files[i]);
-					break;
-				}
-
-				// Destroy the merged state and free the filename.
-				honas_state_destroy(&states[i]);
-				free(state_files[i]);
-				state_files[i] = NULL;
-			}
-		}
+		log_msg(ERR, "Error while loading state file '%s'!", dst_state_filename);
+		free(dst_state_filename);
+		free(src_state_filename);
+		return 1;
 	}
 	else
 	{
-		log_msg(ERR, "No state files were provided!");
+		log_msg(DEBUG, "Succesfully loaded state file '%s'!", dst_state_filename);
 	}
 
-	// Finalize and persist the destination state.
-	honas_state_persist(&states[0], state_files[0], true);
-	honas_state_destroy(&states[0]);
-	free(state_files[0]);
-	state_files[0] = NULL;
+	// Load source state file.
+	if (honas_state_load(&src_state, src_state_filename, true) == -1)
+	{
+		log_msg(ERR, "Error while loading state file '%s'!", src_state_filename);
+		free(dst_state_filename);
+		free(src_state_filename);
+		honas_state_destroy(&dst_state);
+		return 1;
+	}
+	else
+	{
+		log_msg(DEBUG, "Succesfully loaded state file '%s'!", src_state_filename);
+	}
+
+	// Aggregate data from both the target and source states.
+	if (honas_state_aggregate_combine(&dst_state, &src_state))
+	{
+		log_msg(INFO, "Aggregated states '%s' and '%s'!", dst_state_filename, src_state_filename);
+	}
+	else
+	{
+		log_msg(ERR, "Failed to aggregate states '%s' and '%s'!", dst_state_filename, src_state_filename);
+	}
+
+	// Destroy the source state and free the filename.
+	honas_state_destroy(&src_state);
+	free(src_state_filename);
+	src_state_filename = NULL;
+
+	// Check if the destination filename exists, and unlink to allow writing.
+	if (access(dst_state_filename, F_OK) != -1)
+        {
+		unlink(dst_state_filename);
+	}
+
+	// Persist and destroy the destination state, and free the filename.
+	honas_state_persist(&dst_state, dst_state_filename, true);
+	honas_state_destroy(&dst_state);
+	free(dst_state_filename);
+	dst_state_filename = NULL;
 
 	// Clean up final resources.
 	log_destroy();
