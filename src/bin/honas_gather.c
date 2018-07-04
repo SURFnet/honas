@@ -391,8 +391,8 @@ static bool decode_dnstap_message(const Dnstap__Message* m)
 
 					// Store the DNS query in the Bloom filters.
 					honas_state_register_host_name_lookup(&current_active_state, time(NULL), &client, (uint8_t*)hostname, hostname_length
-						, in == 1 ? (uint8_t*)hn_buf : NULL, in == 1 ? strlen((char*)hn_buf) : 0, ctx.dry_run ? &ctx.dry_run_data : NULL
-						, qtype);
+						, in == 1 ? (uint8_t*)hn_buf : (uint8_t*)"UNKNOWN", in == 1 ? strlen((char*)hn_buf) : strlen("UNKNOWN")
+						, ctx.dry_run ? &ctx.dry_run_data : NULL, qtype);
 
 					// Calculate the actual false positive rate, and check whether it is still acceptable.
 					for (uint32_t i = 0; i < current_active_state.header->number_of_filters; i++)

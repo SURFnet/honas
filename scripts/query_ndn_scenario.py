@@ -74,6 +74,11 @@ for k, v in srcdomains.items():
 		searchdata["groups"][0]["hostnames"][compound] = sha256(compound).hexdigest()
 		q_count += 1
 
+	# Also generate an UNKNOWN entity query to identify unmapped requests.
+	unk = "UNKNOWN@" + k
+	searchdata["groups"][0]["hostnames"][unk] = sha256(unk).hexdigest()
+	q_count += 1
+
 # Print statistics.
 print("Generated " + str(q_count) + " queries.")
 

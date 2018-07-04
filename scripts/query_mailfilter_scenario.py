@@ -79,6 +79,11 @@ for k, v in srcips.items():
 			searchdata["groups"][0]["hostnames"][compound] = sha256(compound).hexdigest()
 			q_count += 1
 
+		# Also generate an UNKNOWN entity query to identify unmapped requests.
+		unk = "UNKNOWN@" + n
+		searchdata["groups"][0]["hostnames"][unk] = sha256(unk).hexdigest()
+		q_count += 1
+
 	except dns.exception.SyntaxError:
 		print("Failed to parse " + k + "! Skipping.")
 
