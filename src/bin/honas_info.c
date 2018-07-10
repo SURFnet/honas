@@ -57,6 +57,16 @@ static const double bloom_actual_fpr(const double fr, const uint32_t k)
 	return pow(fr, (double)k);
 }
 
+static void show_plot_information(honas_state_t* state, FILE* out)
+{
+	uint32_t filter_size = state->header->number_of_bits_per_filter >> 3;
+	for (uint32_t i = 0; i < state->header->number_of_filters; i++) {
+		uint32_t bits_set = state->filter_bits_set[i];
+		uint32_t est_nr_host_names = bloom_approx_count(filter_size, state->header->number_of_hashes, bits_set);
+		fprintf(out, "%lu,%u\n", state->header->period_begin, est_nr_host_names);
+	}
+}
+
 static void show_general_information(honas_state_t* state, FILE* out)
 {
 	fprintf(out, "\n## Version information ##\n\n");
@@ -101,12 +111,14 @@ static void show_usage(char* program_name, FILE* out)
 	fprintf(out, "  -h|--help           Show this message\n");
 	fprintf(out, "  -q|--quiet          Be more quiet (can be used multiple times)\n");
 	fprintf(out, "  -v|--verbose        Be more verbose (can be used multiple times)\n");
+	fprintf(out, "  -p|--plotmode       Output timestamp and number of hostnames as CSV\n");
 }
 
 static const struct option long_options[] = {
 	{ "help", no_argument, 0, 'h' },
 	{ "quiet", no_argument, 0, 'q' },
 	{ "verbose", no_argument, 0, 'v' },
+	{ "plotmode", no_argument, 0, 'p' },
 	{ 0, 0, 0, 0 }
 };
 
@@ -114,11 +126,12 @@ int main(int argc, char** argv)
 {
 	char* program_name = "honas-info";
 	char* state_file = NULL;
+	bool plotmode = true;
 
 	/* Parse command line arguments */
 	while (1) {
 		int option_index = 0;
-		int c = getopt_long(argc, argv, "hvq", long_options, &option_index);
+		int c = getopt_long(argc, argv, "hvqp", long_options, &option_index);
 		if (c == -1)
 			break;
 		switch (c) {
@@ -140,6 +153,10 @@ int main(int argc, char** argv)
 
 		case 'v':
 			log_set_min_log_level(log_get_min_log_level() + 1);
+			break;
+
+		case 'p':
+			plotmode = true;
 			break;
 
 		default:
@@ -167,8 +184,16 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
-	/* Print honas state information */
-	show_general_information(&state, stdout);
+	// Check if normal or plot mode was selected.
+	if (plotmode)
+	{
+		show_plot_information(&state, stdout);
+	}
+	else
+	{
+		/* Print honas state information */
+		show_general_information(&state, stdout);
+	}
 
 	/* Close all files and cleanup resources */
 	honas_state_destroy(&state);

@@ -581,13 +581,22 @@ const bool honas_state_aggregate_combine(honas_state_t* target, honas_state_t* s
 			{
 				// Take the bitwise OR of the target and source Bloom filter.
 				byte_slice_bitwise_or(target->filters[i], source->filters[i]);
-
-				// Merge the HyperLogLog structure for client count in both states.
-				hllMerge(&target->client_count, &source->client_count);
-
-				// Merge the HyperLogLog structure for host name count in both states.
-				hllMerge(&target->host_name_count, &source->host_name_count);
 			}
+
+			// Merge the HyperLogLog structure for client count in both states.
+			hllMerge(&target->client_count, &source->client_count);
+
+			// Merge the HyperLogLog structure for host name count in both states.
+			hllMerge(&target->host_name_count, &source->host_name_count);
+
+			// Aggregate the number of requests.
+			target->header->number_of_requests += source->header->number_of_requests;
+
+			// Adjust the timestamps correctly.
+			target->header->period_begin = MIN(target->header->period_begin, source->header->period_begin);
+			target->header->period_end = MAX(target->header->period_end, source->header->period_end);
+			target->header->first_request = MIN(target->header->first_request, source->header->first_request);
+			target->header->last_request = MAX(target->header->last_request, source->header->last_request);
 
 			// The operation succeeded.
 			return true;
