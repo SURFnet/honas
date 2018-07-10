@@ -126,7 +126,7 @@ int main(int argc, char** argv)
 {
 	char* program_name = "honas-info";
 	char* state_file = NULL;
-	bool plotmode = true;
+	bool plotmode = false;
 
 	/* Parse command line arguments */
 	while (1) {
