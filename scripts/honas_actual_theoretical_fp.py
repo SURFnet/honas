@@ -24,26 +24,23 @@ else:
         print("Please enter the target directory as first argument!")
         exit()
 
-# Recursively find all daily Honas state files in the target directory.
-act_dict = {}
-for dayfile in glob.iglob(targetdir + "/**/2018-??-??.hs"):
-	# Get the date from the filename.
-	fn = ntpath.basename(dayfile)
-	datestr = fn.replace(".hs", "")
-	d = int(datetime.strptime(datestr, "%Y-%m-%d").timestamp())
-
-	# Get the parameters and actual fill rate and false positive rate from the current file.
-	info = os.popen(HONAS_INFO_BIN + " " + dayfile + " | grep 'Fill Rate:'").read()
-	acts = re.findall(r"[-+]?\d*\.\d+|\d+", info)
-	fillrate = acts[0]
-	act_fpr = acts[1]
-
-	# Store the fill rate and actual fpr.
-	act_dict[str(fillrate)] = str(act_fpr)
-
-# Write all stored values to a CSV file.
+# Open output file.
 with open("act_vs_theor_fpr.csv", "w") as outputfile:
-	writer = csv.DictWriter(outputfile, fieldnames=[ "fillrate", "act_fpr" ])
-	writer.writeheader()
-	for k, v in act_dict.items():
-		outputfile.write(k + "," + v + "\n")
+	outputfile.write("time,actfpr,fillrate\n")
+
+	# Recursively find all daily Honas state files in the target directory.
+	act_dict = {}
+	for dayfile in glob.iglob(targetdir + "/**/2018-??-??.hs"):
+		# Get the date from the filename.
+		fn = ntpath.basename(dayfile)
+		datestr = fn.replace(".hs", "")
+		d = int(datetime.strptime(datestr, "%Y-%m-%d").timestamp())
+
+		# Get the parameters and actual fill rate and false positive rate from the current file.
+		info = os.popen(HONAS_INFO_BIN + " " + dayfile + " | grep 'Fill Rate:'").read()
+		acts = re.findall(r"[-+]?\d*\.\d+|\d+", info)
+		fillrate = acts[0]
+		act_fpr = acts[1]
+
+		# Store the fill rate and actual fpr.
+		outputfile.write(str(d) + "," + str(act_fpr) + "," + str(fillrate) + "\n")

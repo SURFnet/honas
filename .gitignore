@@ -3,3 +3,4 @@ doc/*
 scripts/honas_tmp_query.json
 scripts/entities_out.csv
 scripts/subnet_definitions.json
+scripts/act_vs_theor_fpr.csv
