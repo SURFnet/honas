@@ -9,8 +9,10 @@ import csv
 import json
 from hashlib import sha256
 import os
+import glob
+import ntpath
 
-HONAS_STATE_DIR = "/var/spool/honas"
+HONAS_STATE_DIR = "/data"
 HONAS_BIN_PATH = "/home/gijs/honas/build/honas-search"
 ENTITY_FILE = "entities_out.csv"
 
@@ -88,21 +90,20 @@ with open(tmpfilename, 'w') as tmpfile:
 	tmpfile.write(json.dumps(searchdata, indent=4, ensure_ascii=False))
 
 # Execute the query to Honas.
-for filename in os.listdir(HONAS_STATE_DIR):
-	if filename.endswith('.hs'):
-		# Execute query for this state file.
-		searchresult = os.popen(HONAS_BIN_PATH + " " + HONAS_STATE_DIR + "/" + filename + " < " + tmpfilename).read()
+for filename in glob.iglob(HONAS_STATE_DIR + "/**/2018-??-??.hs"):
+	# Execute query for this state file.
+	searchresult = os.popen(HONAS_BIN_PATH + " " + filename + " < " + tmpfilename).read()
 
-		# Parse the Honas search result and test whether false positives occurred.
-		jsonresult = json.loads(searchresult)
+	# Parse the Honas search result and test whether false positives occurred.
+	jsonresult = json.loads(searchresult)
 
-		# Check if there are results.
-		if len(jsonresult["groups"]) <= 0:
-			print("No results from search job in " + filename + "!")
-			continue
-		else:
-			print("Found search results in " + filename + "!")
+	# Check if there are results.
+	if len(jsonresult["groups"]) <= 0:
+		print("No results from search job in " + filename + "!")
+		continue
+	else:
+		print("Found search results in " + filename + "!")
 
-		# Write the search results to a JSON file.
-		with open(filename + ".json", 'w') as outresultfile:
-			outresultfile.write(json.dumps(jsonresult, indent=4))
+	# Write the search results to a JSON file.
+	with open(ntpath.basename(filename) + ".json", 'w') as outresultfile:
+		outresultfile.write(json.dumps(jsonresult, indent=4))
