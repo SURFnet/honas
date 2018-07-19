@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # --------------------------------------------
-# NDN scenario ground truth comparison
+# NDN scenario false positive comparison
 # tool for Bloom filter results.
 # --------------------------------------------
 
@@ -9,6 +9,7 @@ import json
 import glob
 import argparse
 import csv
+#import tldextract
 
 # Parse input arguments.
 parser = argparse.ArgumentParser(description='NDN scenario ground truth comparison tool')
@@ -21,8 +22,8 @@ results = parser.parse_args()
 
 # Storage variables.
 searchresult_dict = {}
-in_searchresults = 0
-notin_searchresults = 0
+in_groundtruth = 0
+notin_groundtruth = 0
 total = 0
 misses = []
 groundtruth_dict = {}
@@ -45,34 +46,7 @@ with open(results.ground_truth, 'r') as ground_file, open(results.result_file, '
 
 	if results.verbose:
 		print("First request: " + str(period_begin) + ", last request: " + str(period_end))
-		print("Parsing JSON search results file...")
-
-	# Parse all queries from the search results.
-	for hostname in searchresults['groups'][0]['hostnames']:
-		# Find out if there is an entity label.
-		atsign = hostname.find('@')
-
-		# A label must be present!
-#		if atsign <= 0:
-#			continue
-
-		# Check if the label is one of the provided. For this scenario, the query must be
-		# prepended with one of the labels in order for it to be correct.
-#		if hostname[0:atsign] not in labels:
-#			continue
-
-		# Take off the label, and compare to the ground truth.
-#		hostname = hostname[atsign + 1:len(hostname)]
-
-		# Store the search result in a dictionary.
-		searchresult_dict[hostname] = 0
-
-	if results.verbose:
-		print("Parsed " + str(len(searchresult_dict)) + " domain names from search results file.")
 		print("Parsing ground truth file...")
-
-#	for k, v in searchresult_dict.items():
-#		print(k)
 
 	# Parse the CSV ground truth file.
 	# 1531403599, Q(Q), 145.220.24.179, IN, A, ftp.xenonbooter.xyz.
@@ -93,37 +67,76 @@ with open(results.ground_truth, 'r') as ground_file, open(results.result_file, '
 			# Strip the trailing dot from the hostname.
 			hostname = row[5].rstrip('.').strip()
 
+			# Extract the SLD.TLD (since that is in the blacklist).
+			#tldsld = tldextract.extract(hostname)
+			#alternate = tldsld.domain + "." + tldsld.suffix
+
 			# Check if the domain name appears in the ground truth.
 			if hostname in blacklist_dict:
 				# Store the domain name in a dictionary (enforcing uniqueness).
 				total += 1
 				groundtruth_dict[hostname] = 0
 
+			#elif alternate in blacklist_dict:
+			#	# Check if the SLD.TLD is in the ground truth.
+			#	total += 1
+			#	groundtruth_dict[alternate] = 0
+
 	if results.verbose:
 		print("[" + str(total) + " / " + str(all_groundtruth) + "] from ground truth appear in blacklist.")
+		print("Parsing JSON search results file...")
 
-	# Walk the dictionary to check the ground truth.
-	for k, v in groundtruth_dict.items():
+	# Parse all queries from the search results.
+	for hostname in searchresults['groups'][0]['hostnames']:
+		# Find out if there is an entity label.
+#		atsign = hostname.find('@')
+
+		# A label must be present!
+#		if atsign <= 0:
+#			continue
+
+		# Check if the label is one of the provided. For this scenario, the query must be
+		# prepended with one of the labels in order for it to be correct.
+#		if hostname[0:atsign] not in labels:
+#			continue
+
+		# Take off the label, and compare to the ground truth.
+#		if atsign > 0:
+#			hostname = hostname[atsign + 1:len(hostname)]
+
+		# Check search result against the NDN blacklist, and
+		# store the search result in a dictionary.
+		if hostname in blacklist_dict:
+			searchresult_dict[hostname] = 0
+
+	if results.verbose:
+		print("Parsed " + str(len(searchresult_dict)) + " domain names from search results file.")
+
+#	for k, v in searchresult_dict.items():
+#		print(k)
+
+	# Walk the dictionary to check the search results against the ground truth.
+	for k, v in searchresult_dict.items():
 		# Check whether ground truth entry is also in search results.
-		if k in searchresult_dict:
-			in_searchresults += 1
+		if k in groundtruth_dict:
+			in_groundtruth += 1
 		else:
-			notin_searchresults += 1
+			notin_groundtruth += 1
 			misses.append(k)
 
 # Print statistics about the ground truth matching.
 print("Statistics for " + results.result_file + ":" )
-print("[" + str(in_searchresults) + " / " + str(len(groundtruth_dict)) + "] from the ground truth were also in the search results!")
+print("[" + str(in_groundtruth) + " / " + str(len(searchresult_dict)) + "] from the search results were also in the ground truth!")
 
 # Only print non-existent entries if there are any.
-if notin_searchresults > 0:
-	print("[" + str(notin_searchresults) + " / " + str(len(groundtruth_dict)) + "] from the ground truth were not in the search results!")
+if notin_groundtruth > 0:
+	print("[" + str(notin_groundtruth) + " / " + str(len(searchresult_dict)) + "] from the search results were not in the ground truth!")
 
 	if results.dumpgt:
 		print("The following search results were not present in the ground truth:")
 		index = 0
 		for miss in misses:
 			index +=1
-			print("[" + str(index) + " / " + str(notin_searchresults) + "] " + miss)
+			print("[" + str(index) + " / " + str(notin_groundtruth) + "] " + miss)
 	else:
-		print("Use the -d switch to find out which ground truth entries were not present in the search results.")
+		print("Use the -d switch to find out which search results were not present in the ground truth.")

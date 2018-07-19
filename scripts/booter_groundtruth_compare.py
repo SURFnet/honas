@@ -62,7 +62,7 @@ with open(results.ground_truth, 'r') as ground_file, open(results.result_file, '
 #			continue
 
 		# Take off the label, and compare to the ground truth.
-		hostname = hostname[atsign + 1:len(hostname)]
+#		hostname = hostname[atsign + 1:len(hostname)]
 
 		# Store the search result in a dictionary.
 		searchresult_dict[hostname] = 0
