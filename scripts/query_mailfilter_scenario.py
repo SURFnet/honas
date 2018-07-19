@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # ---------------------------------------------
 # Query tool to create Honas queries from a
 # list of spamfilter PTR record queries.
@@ -9,48 +9,22 @@ import csv
 import json
 from hashlib import sha256
 import os
-import dns.resolver
+import ipaddress
 import glob
 import ntpath
+import datetime
 
 HONAS_STATE_DIR = "/data"
 HONAS_BIN_PATH = "/home/gijs/honas/build/honas-search"
 ENTITY_FILE = "entities_out.csv"
 
-# Check if we have an input file containing spamfilter records.
-spamfilterfile = ""
+# Get the target directory for ground truth files.
+targetdir = ""
 if len(sys.argv) > 1:
-	spamfilterfile = sys.argv[1]
+	targetdir = sys.argv[1]
 else:
-	print("Please enter a spamfilter file as first argument!")
+	print("Please enter the target directory as first argument!")
 	exit()
-
-print("Processing PTR queries from input spamfilter file.")
-
-# Prepare Honas search query.
-searchdata = { "groups" : [] }
-searchdata["groups"].append({ "id" : 1 })
-searchdata["groups"][0]["hostnames"] = {}
-
-# Prepare a dictionary containing all unique IP-addresses in the spamfilter file.
-# For convinience we store the number of times it occurred as value.
-srcips = {}
-
-# Read the spamfilter file.
-with open(spamfilterfile, "r") as inpfile:
-	reader = csv.reader(inpfile, delimiter=' ')
-	for row in reader:
-		ipaddr = row[1].strip()
-
-		# Store the domain name in the dictionary for comparison later.
-		# This way we remove the duplicates, which reduces lookup time.
-		if ipaddr in srcips:
-			srcips[ipaddr] += 1
-		else:
-			srcips[ipaddr] = 1
-
-# Print statistics.
-print("Processed " + str(len(srcips)) + " IP addresses.")
 
 # Read all entities in a dictionary if possible.
 entities = {}
@@ -63,43 +37,78 @@ with open(ENTITY_FILE, 'r') as entity_file:
 		else:
 			entities[ent_str] = 1
 
-# Perform reverse lookups for the domain names.
-q_count = 0
-for k, v in srcips.items():
-	try:
-		# Create the reverse DNS lookup for the IP address.
-		n = str(dns.reversename.from_address(k)).rstrip('.')
-		q_count += 1
+# Get all applicable file.
+for fn in glob.iglob(targetdir + "/mail-2018-07-??.log"):
+	print("Processing PTR queries from " + fn)
 
-		# Create Honas JSON query for this domain name.
-		searchdata["groups"][0]["hostnames"][n] = sha256(n).hexdigest()
+	# Get timestamp from input file.
+	ind = fn.find("mail-")
+	timestamp = fn[ind + len("mail-") : len(fn) - len(".log")]
 
-		# Iterate through all entities in the entities file, and generate
-		# a query for every combination of domain name and entity.
-		for k1, v1 in entities.items():
-			compound = str(k1) + '@' + n
-			searchdata["groups"][0]["hostnames"][compound] = sha256(compound).hexdigest()
+	# Prepare Honas search query.
+	searchdata = { "groups" : [] }
+	searchdata["groups"].append({ "id" : 1 })
+	searchdata["groups"][0]["hostnames"] = {}
+
+	# Prepare a dictionary containing all unique IP-addresses in the spamfilter file.
+	# For convinience we store the number of times it occurred as value.
+	srcips = {}
+
+	# Read the spamfilter file.
+	with open(fn, 'r') as target_file:
+		reader = csv.reader(target_file, delimiter=' ')
+		for row in reader:
+			ipaddr = row[1].strip()
+
+			# Store the domain name in the dictionary for comparison later.
+			# This way we remove the duplicates, which reduces lookup time.
+			if ipaddr in srcips:
+				srcips[ipaddr] += 1
+			else:
+				srcips[ipaddr] = 1
+
+		# Print statistics.
+		print("Processed " + str(len(srcips)) + " unique IP addresses.")
+
+	# Perform reverse lookups for the domain names.
+	q_count = 0
+	for k, v in srcips.items():
+		try:
+			# Create the reverse DNS lookup for the IP address.
+			n = ipaddress.ip_address(k).reverse_pointer
 			q_count += 1
 
-		# Also generate an UNKNOWN entity query to identify unmapped requests.
-		unk = "UNKNOWN@" + n
-		searchdata["groups"][0]["hostnames"][unk] = sha256(unk).hexdigest()
-		q_count += 1
+			# Create Honas JSON query for this domain name.
+			searchdata["groups"][0]["hostnames"][n] = sha256(n.encode('utf-8')).hexdigest()
 
-	except dns.exception.SyntaxError:
-		print("Failed to parse " + k + "! Skipping.")
+			# Iterate through all entities in the entities file, and generate
+			# a query for every combination of domain name and entity.
+			for k1, v1 in entities.items():
+				compound = str(k1) + '@' + str(n)
+				searchdata["groups"][0]["hostnames"][compound] = sha256(compound.encode('utf-8')).hexdigest()
+				q_count += 1
 
-# Print statistics.
-print("Generated " + str(q_count) + " queries.")
+			# Also generate an UNKNOWN entity query to identify unmapped requests.
+			unk = "UNKNOWN@" + str(n)
+			searchdata["groups"][0]["hostnames"][unk] = sha256(unk.encode('utf-8')).hexdigest()
+			q_count += 1
 
-# Write the Honas JSON query to a temporary file.
-tmpfilename = "honas_tmp_query.json"
-with open(tmpfilename, 'w') as tmpfile:
-	tmpfile.write(json.dumps(searchdata, indent=4, ensure_ascii=False))
+		except ValueError:
+			print("Failed to parse " + k + "! Skipping.")
 
-# Execute the query to Honas.
-for filename in glob.iglob(HONAS_STATE_DIR + "/**/2018-??-??.hs"):
-	# Execute query for this state file.
+	# Print statistics.
+	print("Generated " + str(q_count) + " queries.")
+
+	# Write the Honas JSON query to a temporary file.
+	tmpfilename = "honas_tmp_query.json"
+	with open(tmpfilename, 'w') as tmpfile:
+		tmpfile.write(json.dumps(searchdata, indent=4, ensure_ascii=False))
+
+	# Convert timestamp to directory format.
+	timeobj = datetime.datetime.strptime(timestamp, "%Y-%m-%d").strftime("%d-%m-%Y")
+
+	# Execute the query to Honas.
+	filename = HONAS_STATE_DIR + "/" + timeobj + "/" + timestamp + ".hs"
 	searchresult = os.popen(HONAS_BIN_PATH + " " + filename + " < " + tmpfilename).read()
 
 	# Parse the Honas search result and test whether false positives occurred.

@@ -9,8 +9,8 @@ import json
 import glob
 import argparse
 import csv
-import datetime
 import ipaddress
+import datetime
 
 # Parse input arguments.
 parser = argparse.ArgumentParser(description='Mailfilter scenario ground truth comparison tool')
@@ -22,9 +22,9 @@ results = parser.parse_args()
 
 # Storage variables.
 blacklistuniqs = {}
-groundtruth_dict = {}
-in_groundtruth = 0
-notin_groundtruth = 0
+searchresult_dict = {}
+in_searchresults = 0
+notin_searchresults = 0
 total = 0
 misses = []
 
@@ -40,39 +40,12 @@ with open(results.ground_truth, 'r') as ground_file, open(results.result_file, '
 
 	if results.verbose:
 		print("First request: " + str(period_begin) + ", last request: " + str(period_end))
-		print("Parsing ground truth file...")
-
-	# Parse the CSV ground truth file.
-	reader = csv.reader(ground_file, delimiter=' ')
-	for row in reader:
-		# Get timestamp from date string.
-		timestamp = int(datetime.datetime.strptime(row[0], '%Y-%m-%dT%H:%M:%S+02:00').timestamp())
-
-		# Store the search result query if the timestamp falls in the stored region.
-		if timestamp >= period_begin and timestamp <= period_end:
-			blacklistuniqs[row[1]] = 0
-
-	# Now convert IPs to PTR, takes much shorter time when only uniques are converted.
-	for k, v in blacklistuniqs.items():
-		try:
-			ipptr = ipaddress.ip_address(k).reverse_pointer
-
-			# Store the PTR record.
-			groundtruth_dict[ipptr] = 0
-
-		except ValueError:
-			print("Failed to parse " + k + "! Skipping.")
-
-	if results.verbose:
-		print("Parsed " + str(len(groundtruth_dict)) + " IP-addresses from ground truth file.")
 		print("Parsing JSON search results file...")
 
 	# Parse all queries from the search results.
-	all_results = 0
 	for hostname in searchresults['groups'][0]['hostnames']:
 		# Find out if there is an entity label.
 		atsign = hostname.find('@')
-		all_results += 1
 
 		# A label must be present!
 		if atsign <= 0:
@@ -85,28 +58,62 @@ with open(results.ground_truth, 'r') as ground_file, open(results.result_file, '
 
 		# Take off the label, and compare to the ground truth.
 		hostname = hostname[atsign + 1:len(hostname)]
-		total += 1
 
-		# Check whether ground truth entry is also in search results.
-		if hostname in groundtruth_dict:
-			in_groundtruth += 1
-		else:
-			notin_groundtruth += 1
-			misses.append(hostname)
+		# Store the search result in a dictionary.
+		searchresult_dict[hostname] = 0
 
 	if results.verbose:
-		print("[" + str(total) + " / " + str(all_results) + "] were declared to be valid.")
+		print("Parsed " + str(len(searchresult_dict)) + " domain names from search results file.")
+		print("Parsing ground truth file...")
+
+#	for k, v in searchresult_dict.items():
+#		print(k)
+
+	# Parse the ground truth file.
+	all_groundtruth = 0
+	reader = csv.reader(ground_file, delimiter=' ')
+	for row in reader:
+		# Parse the CSV ground truth file.
+		reader = csv.reader(ground_file, delimiter=' ')
+		for row in reader:
+			# Get timestamp from date string.
+			timestamp = int(datetime.datetime.strptime(row[0], '%Y-%m-%dT%H:%M:%S+02:00').timestamp())
+
+			# Store the search result query if the timestamp falls in the stored region.
+			if timestamp >= period_begin and timestamp <= period_end:
+				blacklistuniqs[row[1]] = 0
+
+	# Now convert IPs to PTR, takes much shorter time when only uniques are converted.
+	for k, v in blacklistuniqs.items():
+		try:
+			ipptr = ipaddress.ip_address(k).reverse_pointer
+
+			# Check whether ground truth entry is also in search results.
+			if ipptr in searchresult_dict:
+				in_searchresults += 1
+			else:
+				notin_searchresults += 1
+				misses.append(ipptr)
+
+		except ValueError:
+			print("Failed to parse " + k + "! Skipping.")
+
+	if results.verbose:
+		print("Parsed " + str(len(blacklistuniqs)) + " IP-addresses from ground truth file.")
 
 # Print statistics about the ground truth matching.
 print("Statistics for " + results.result_file + ":" )
-print("[" + str(in_groundtruth) + " / " + str(total) + "] from search results are also in the ground truth!")
-print("[" + str(notin_groundtruth) + " / " + str(total) + "] from search results are not in the ground truth!")
+print("[" + str(in_searchresults) + " / " + str(len(blacklistuniqs)) + "] from the ground truth were also in the search results!")
 
-if results.dumpgt:
-	print("The following search results were not present in the ground truth:")
-	index = 0
-	for miss in misses:
-		index +=1
-		print("[" + str(index) + " / " + str(notin_groundtruth) + "] " + miss)
-else:
-	print("Use the -d switch to find out which search results were not present in the ground truth.")
+# Only print non-existent entries if there are any.
+if notin_searchresults > 0:
+	print("[" + str(notin_searchresults) + " / " + str(len(blacklistuniqs)) + "] from the ground truth were not in the search results!")
+
+	if results.dumpgt:
+		print("The following search results were not present in the ground truth:")
+		index = 0
+		for miss in misses:
+			index +=1
+			print("[" + str(index) + " / " + str(notin_searchresults) + "] " + miss)
+	else:
+		print("Use the -d switch to find out which ground truth entries were not present in the search results.")
