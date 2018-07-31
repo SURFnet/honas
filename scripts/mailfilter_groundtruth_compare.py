@@ -107,7 +107,7 @@ print("[" + str(in_searchresults) + " / " + str(len(blacklistuniqs)) + "] from t
 
 # Only print non-existent entries if there are any.
 if notin_searchresults > 0:
-	print("[" + str(notin_searchresults) + " / " + str(len(blacklistuniqs)) + "] from the ground truth were not in the search results!")
+	print("[" + str(notin_searchresults) + " / " + str(len(blacklistuniqs)) + "] (" + '%.2f' % (notin_searchresults / len(blacklistuniqs) * 100) + "%) from the ground truth were not in the search results!")
 
 	if results.dumpgt:
 		print("The following search results were not present in the ground truth:")

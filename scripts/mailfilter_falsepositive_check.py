@@ -102,7 +102,7 @@ print("[" + str(in_groundtruth) + " / " + str(total) + "] from the search result
 
 # Only print non-existent entries if there are any.
 if notin_groundtruth > 0:
-	print("[" + str(notin_groundtruth) + " / " + str(total) + "] from the search results were not in the ground truth!")
+	print("[" + str(notin_groundtruth) + " / " + str(total) + "] (" + '%.2f' % ((notin_groundtruth / total) * 100) + "%) from the search results were not in the ground truth!")
 
 	if results.dumpgt:
 		print("The following search results were not present in the ground truth:")

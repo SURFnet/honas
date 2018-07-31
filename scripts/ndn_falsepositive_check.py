@@ -9,7 +9,6 @@ import json
 import glob
 import argparse
 import csv
-#import tldextract
 
 # Parse input arguments.
 parser = argparse.ArgumentParser(description='NDN scenario ground truth comparison tool')
@@ -67,20 +66,25 @@ with open(results.ground_truth, 'r') as ground_file, open(results.result_file, '
 			# Strip the trailing dot from the hostname.
 			hostname = row[5].rstrip('.').strip()
 
-			# Extract the SLD.TLD (since that is in the blacklist).
-			#tldsld = tldextract.extract(hostname)
-			#alternate = tldsld.domain + "." + tldsld.suffix
+			#  Insert all domain name parts, starting from the first dot onwards.
+			i = 0
+			next = hostname
+			while i != -1:
+				# Check if the domain name appears in the ground truth.
+				if next in blacklist_dict:
+					# Store the domain name in a dictionary (enforcing uniqueness).
+					total += 1
+					groundtruth_dict[next] = 0
 
-			# Check if the domain name appears in the ground truth.
-			if hostname in blacklist_dict:
-				# Store the domain name in a dictionary (enforcing uniqueness).
-				total += 1
-				groundtruth_dict[hostname] = 0
+				# Find next label separator.
+				i = hostname.find('.', i + 1)
 
-			#elif alternate in blacklist_dict:
-			#	# Check if the SLD.TLD is in the ground truth.
-			#	total += 1
-			#	groundtruth_dict[alternate] = 0
+				# Get the next domain name.
+				next = hostname[i + 1 : len(hostname)]
+
+	# Debugging
+#	for k,v in groundtruth_dict.items():
+#		print(k)
 
 	if results.verbose:
 		print("[" + str(total) + " / " + str(all_groundtruth) + "] from ground truth appear in blacklist.")
