@@ -30,11 +30,12 @@ with open("act_vs_theor_fpr.csv", "w") as outputfile:
 
 	# Recursively find all daily Honas state files in the target directory.
 	act_dict = {}
-	for dayfile in glob.iglob(targetdir + "/**/2018-??-??.hs"):
+	for dayfile in glob.iglob(targetdir + "/**/2018-07-??.hs"):
 		# Get the date from the filename.
 		fn = ntpath.basename(dayfile)
 		datestr = fn.replace(".hs", "")
 		d = int(datetime.strptime(datestr, "%Y-%m-%d").timestamp())
+		print("Processing Bloom filter for " + datestr + ", timestamp: " + str(d))
 
 		# Get the parameters and actual fill rate and false positive rate from the current file.
 		info = os.popen(HONAS_INFO_BIN + " " + dayfile + " | grep 'Fill Rate:'").read()

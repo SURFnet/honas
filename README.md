@@ -4,13 +4,18 @@ Honas - Host name searching                      {#mainpage}
 ===========================
 
 Honas is a system for collecting large quantities of hostname lookup requests
-in order to check afterwards if certain hostnames have been requested by some
-or many clients.
+in order to check afterwards if certain hostnames have been requested by clients.
 
 It tries to prevent disclosing privacy sensitive details about individual
 clients by making use of coarse grained cardinality estimation using multiple
 probabilistic data structures in the form of [bloom
 filters](https://en.wikipedia.org/wiki/Bloom_filter).
+
+Honas was originally developed by Quarantainenet, but extended by SURFnet to
+fit an ISP context. This extended prototype features a [dnstap](http://dnstap.info/)
+input for untraceability. Furthermore, it allows network operators to identify
+the organization or network segment DNS queries were performed in. With this feature,
+the prototype is useful to gain insight into the threat landscape of an organization.
 
 Build instructions                               {#build_instructions}
 ------------------
@@ -19,6 +24,12 @@ Honas is build using the Meson build system, for installation instructions and
 more information, see the [Meson website](http://mesonbuild.com/).
 
 ### Building the programs:
+
+Install the necessary dependencies:
+
+```
+apt-get install check libyajl-dev libevent-dev libfstrm-dev libprotobuf-dev protobuf-c-compiler
+```
 
 Create the meson build directory:
 
@@ -98,59 +109,51 @@ Each of these parts is discussed in more detail below.
 ### DNS logging                                  {#dns_logging}
 
 Honas is designed to be run as a separate process that processes DNS server
-logging. Multiple logging formats can be supported through a modular input
-system.
+logging. The extended prototype is designed to accept DNS logs via a [dnstap](http://dnstap.info/)
+interface. With that interface, Honas integrates easily into major DNS resolver
+packages such as Unbound and Bind. Moreover, the DNS logs are transferred from
+the resolver process to Honas in an untraceable way.
 
-Depending on the capabilities of the DNS server Honas log processing can be
-started directly as a log processing command, as a log processer configured
-through a syslog service or as a batch processor by calling it on archived
-logfiles.
-
-#### The `dns-relayd` input format
-
-Currently Honas only features a parser for the dns-relayd "analyze_dns_handler"
-format read from stdin. This is a very basic DNS request logging format that
-can be easily generated.
-
-##### Format
+Honas stores the FQDN and all separate labels from the FQDN in the Bloom filters, including
+some combinations. This allows DGA detection to some extent. The example below indicates
+which information from a DNS query is stored in the Bloom filters. The example domain name is
 
 ```
-<integer> <ip> <string>/<number>/<number>
+malicious.site.example.com
 ```
 
-Explanation:
+The following information is stored.
 
-- The first integer is the timestamp as the number of seconds since unix epoch
-- Followed by a single space character
-- Followed by the client's IP address (for IPv4 in the dotted decimal notation or for IPv6 in its canonical representation)
-- Followed by a single space character
-- Followed by the host name being looked up (with or without trailing dot)
-- Followed by a forward slash character
-- Followed by the [DNS CLASS](https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-2) as a number
-- Followed by a forward slash character
-- Followed by the [DNS Resourc Record (RR) TYPE](https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4) as a number
-- Followed by a new line character
+```
+malicious.site.example.com
+example.com
+malicious
+site
+example
+```
+
+If the source address of the DNS query can be matched to a known IPv4 or IPv6 prefix, the following
+information is stored additionally. Suppose that the matched prefix belongs to organization A. (No
+spaces between the @ sign, this is for markdown compilation)
+
+```
+A @ malicious.site.example.com
+A @ example.com
+A @ malicious
+A @ site
+A @ example
+```
 
 ##### Notes
 
+The following notes apply to the parsing of DNS logs.
+
 - The timestamp value is ignored and "now" is used when processing the entries in the state file
-- Only fully qualified domain names are handled properly
 - All host names are expected to be in ASCII, other Unicode host names should be [punycode](https://en.wikipedia.org/wiki/Punycode) encoded
 - A trailing dot after the host name is stripped before being hashed
+- The TLD label is not stored because it does not identify a domain name in any way
 - Only DNS CLASS 1 (`Internet (IN)`) gets processed
 - Only DNS Resource Records of type 1 (`A`), 2 (`NS`), 15 (`MX`) and 28 (`AAAA`) are processed
-
-##### Example logging
-
-```
-1509929280 192.168.0.101 e13074.d.akamaiedge.net/1/1
-1509929280 192.168.0.98 pop-eur-benelux-courier.push-apple.com.akadns.net/1/1
-1509929280 192.168.0.92 e1863.dspb.akamaiedge.net/1/1
-1509929281 192.168.0.94 sirius.mwbsys.com/1/1
-1509929281 192.168.0.89 auth.ns1.ff.avast.com/1/1
-1509929281 192.168.0.90 olympia.prod.mozaws.net/1/1
-1509929281 192.168.0.99 e4578.g.akamaiedge.net/1/1
-```
 
 ### The Honas state file                         {#honas_state_file}
 
@@ -402,6 +405,9 @@ Usage: honas-gather [--help] [--config <file>]
   -q|--quiet          Be more quiet (can be used multiple times)
   -s|--syslog         Log messages to syslog
   -v|--verbose        Be more verbose (can be used multiple times)
+  -f|--fork           Fork the process as daemon (syslog must be enabled)
+  -a|--aggregate      Aggregates queries by subnet per filter (predefined subnets)
+  -d|--dry-run        Performs measurements and gives advice about Bloom filter configuration
 ```
 
 #### Configuration
@@ -416,23 +422,55 @@ the command line, can be changed through a build configuration option.
 The supported configuration items, which are all required, are:
 
 - `bloomfilter_path`: The directory where honas state files will be written
-- `input_name`: The input module that parses the DNS server logs for host name lookups
+- `subnet_activity_path`: The input file used to perform entity-prefix mappings
 - `period_length`: The maximum period length for each state file
-- `number_of_filters`: How many bloom filters should there be per state file
 - `number_of_bits_per_filter`: How many bits each bloom filter should have
+- `number_of_filters`: How many bloom filters should there be per state file
 - `number_of_hashes`: How many bits should be set per filter per looked up host name
 - `number_of_filters_per_user`: How many bloom filters to update for each host name lookup per client
 
 #### Example configuration
 
 ```txt
-bloomfilter_path /var/spool/honas/gather
-input_name dns-relayd
+bloomfilter_path /var/spool/honas/
+subnet_activity_path /etc/honas/subnet_definitions.json
 period_length 3600
-number_of_filters 4
-number_of_bits_per_filter 134217728
+number_of_bits_per_filter 491040000
+number_of_filters 1
+number_of_filters_per_user 1
 number_of_hashes 10
-number_of_filters_per_user 2
+flatten_threshold 1
+```
+
+#### The Dry-Run
+
+The Honas prototype uses Bloom filters, which have a fixed size. This size must be
+estimated before storing DNS queries. This way, the false positive rate of the
+Bloom filters can be controlled. To do so, the extended prototype features a
+dry-run mode. This dry-run mode can be enabled using the '-d' switch, and it
+will provide a daily advice on suggested Bloom filter parameters, given the
+current query stream. It is strongly suggested to perform a dry-run for at
+least a week, using a query stream that is representative of the actual use
+of the network. An example advice is given below.
+
+```
+------------------------------------ Advice ------------------------------------
+[10-08-2018 13:32] The numbers are rounded up to the nearest hundred-thousand, and a tolerance of 10 percent is added.
+-------------------------------- Hourly Filters --------------------------------
+[10-08-2018 13:32] For a false positive rate of 1 / 1000, BF size (m) should be 40810000, based on 2578756 unique domain names
+[10-08-2018 13:32] The number of hash functions (k) should be 10
+[10-08-2018 13:32] For a false positive rate of 1 / 10000, BF size (m) should be 54450000, based on 2578756 unique domain names
+[10-08-2018 13:32] The number of hash functions (k) should be 14
+[10-08-2018 13:32] For a false positive rate of 1 / 100000, BF size (m) should be 67980000, based on 2578756 unique domain names
+[10-08-2018 13:32] The number of hash functions (k) should be 16
+-------------------------------- Daily Filters ---------------------------------
+[10-08-2018 13:32] For a false positive rate of 1 / 1000, BF size (m) should be 305250000, based on 19300734 unique domain names
+[10-08-2018 13:32] The number of hash functions (k) should be 10
+[10-08-2018 13:32] For a false positive rate of 1 / 10000, BF size (m) should be 407000000, based on 19300734 unique domain names
+[10-08-2018 13:32] The number of hash functions (k) should be 14
+[10-08-2018 13:32] For a false positive rate of 1 / 100000, BF size (m) should be 508750000, based on 19300734 unique domain names
+[10-08-2018 13:32] The number of hash functions (k) should be 16
+-------------------------------------- End -------------------------------------
 ```
 
 ### The `honas-search` process                   {#honas_search}
@@ -527,12 +565,13 @@ Options:
   -h|--help           Show this message
   -q|--quiet          Be more quiet (can be used multiple times)
   -v|--verbose        Be more verbose (can be used multiple times)
+  -p|--plotmode       Output timestamp and number of hostnames as CSV
 ```
 
 #### Example
 
 ```
-$ honas-info '2017-12-06T11:50:21.hs'
+$ honas-info '2018-07-01.hs'
 
 ## Version information ##
 
@@ -541,29 +580,43 @@ State file version: 1.0
 
 ## Period information ##
 
-Period begin                  : 2017-12-06T12:50:18
-First request                 : 2017-12-06T12:50:18
-Last request                  : 2017-12-06T12:50:21
-Period end                    : 2017-12-06T12:50:21
-Estimated number of clients   : 47
-Estimated number of host names: 2039
-Number of requests            : 1113932
+Period begin                  : 2018-07-01T01:00:38
+First request                 : 2018-07-01T01:00:38
+Last request                  : 2018-07-02T01:00:38
+Period end                    : 2018-07-02T01:00:00
+Estimated number of clients   : 10163
+Estimated number of host names: 128019870 
+Number of requests            : 155622232
 
 ## Filter configuration ##
 
-Number of filters         : 4
-Number of filters per user: 2
+Number of filters         : 1
+Number of filters per user: 1
 Number of hashes          : 10
-Number of bits per filter : 134217728
-Flatten threshold         : 0
+Number of bits per filter : 491040000
+Flatten threshold         : 1
 
 ## Filter information ##
 
- 1. Number of bits set:      14679 (Estimated number of host names:       1468)
- 2. Number of bits set:       9490 (Estimated number of host names:        949)
- 3. Number of bits set:      17558 (Estimated number of host names:       1756)
- 4. Number of bits set:       8684 (Estimated number of host names:        868)
+ 1. Number of bits set:  118252441 (Estimated number of host names:   13528981)
+    Fill Rate:        0.2408203833 (False positive probability:   0.0000006560)
+```
 
+### The `honas-combine` program                     {#honas_combine}
+
+The `honas-combine` program aggregates the Bloom filters and other parameters
+and structures in two Honas state files. Note that the first parameter is also
+the destination state for the aggregation.
+
+#### Usage
+
+```
+Usage: honas-combine [<options>] <dst-state-file> <src-state-file>
+
+Options:
+  -h|--help           Show this message
+  -q|--quiet          Be more quiet (can be used multiple times)
+  -v|--verbose        Be more verbose (can be used multiple times)
 ```
 
 Validations                                      {#validations}
