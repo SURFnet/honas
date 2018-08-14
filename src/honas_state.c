@@ -330,7 +330,7 @@ void honas_state_register_host_name_lookup(honas_state_t* state, uint64_t timest
 		localbuf[strlen((char*)localbuf)] = '@';
 
 		// Append the domain name label.
-		strncat((char*)localbuf, (char*)local_host_name, sizeof(localbuf) - strlen((char*)localbuf));
+		strncat((char*)localbuf, (char*)local_host_name, sizeof(localbuf) - strlen((char*)localbuf) - 1);
 
 		/* Calculate the hash of the label */
 		SHA256(localbuf, strlen((char*)localbuf), host_name_hash_slice.bytes);

@@ -25,10 +25,10 @@ more information, see the [Meson website](http://mesonbuild.com/).
 
 ### Building the programs:
 
-Install the necessary dependencies:
+Install the necessary dependencies (command below is for Debian based systems):
 
 ```
-apt-get install check libyajl-dev libevent-dev libfstrm-dev libprotobuf-dev protobuf-c-compiler
+apt-get install check libyajl-dev libevent-dev libfstrm-dev libprotobuf-dev protobuf-c-compiler clang-tidy
 ```
 
 Create the meson build directory:
@@ -111,7 +111,8 @@ Each of these parts is discussed in more detail below.
 Honas is designed to be run as a separate process that processes DNS server
 logging. The extended prototype is designed to accept DNS logs via a [dnstap](http://dnstap.info/)
 interface. With that interface, Honas integrates easily into major DNS resolver
-packages such as Unbound and Bind. Moreover, the DNS logs are transferred from
+packages such as [Unbound](https://www.nlnetlabs.nl/projects/unbound/about/) 
+and [Bind](https://www.isc.org/downloads/bind/). Moreover, the DNS logs are transferred from
 the resolver process to Honas in an untraceable way.
 
 Honas stores the FQDN and all separate labels from the FQDN in the Bloom filters, including
@@ -146,7 +147,7 @@ A @ example
 
 ##### Notes
 
-The following notes apply to the parsing of DNS logs.
+The following notes apply to the collection and storage of DNS logs.
 
 - The timestamp value is ignored and "now" is used when processing the entries in the state file
 - All host names are expected to be in ASCII, other Unicode host names should be [punycode](https://en.wikipedia.org/wiki/Punycode) encoded
@@ -295,6 +296,7 @@ search job by `honas-search`.
 		{
 			"number_of_bits_set": <integer>,
 			"estimated_number_of_host_names": <integer>
+			"actual_false_positive_rate": <string>,
 		},
 		...
 	],
@@ -339,53 +341,46 @@ search job by `honas-search`.
   (`estimated_number_of_clients` is less then the `flatten_threshold`) then the
   value of `flattened_results` will be true and all the hit counts will be at
   most 1.
+- The `actual_false_positive_rate` provides an estimation of the actual false
+  positive rate. This estimation depends on the fill rate (number_of_bits_set)
+  of the Bloom filter, its current state. The value is stored as string, but
+  contains a double value.
 
 #### Example
 
 ```json
 {
-	"node_version": "1.0.0",
-	"state_file_version": "1.0",
-	"period_begin": 1512561018,
-	"first_request": 1512561018,
-	"last_request": 1512561021,
-	"period_end": 1512561021,
-	"estimated_number_of_clients": 47,
-	"estimated_number_of_host_names": 2039,
-	"number_of_requests": 1113932,
-	"number_of_filters": 4,
-	"number_of_filters_per_user": 2,
-	"number_of_hashes": 10,
-	"number_of_bits_per_filter": 134217728,
-	"flatten_threshold": 0,
-	"filters": [
-		{
-			"number_of_bits_set": 14679,
-			"estimated_number_of_host_names": 1468
-		},
-		{
-			"number_of_bits_set": 9490,
-			"estimated_number_of_host_names": 949
-		},
-		{
-			"estimated_number_of_host_names": 1756,
-			"number_of_bits_set": 17558
-		},
-		{
-			"number_of_bits_set": 8684,
-			"estimated_number_of_host_names": 868
-		}
-	],
-	"flattened_results": false,
-	"groups": [
-		{
-			"hits_by_all_hostnames": 4,
-			"id": 1,
-			"hostnames": {
-				"www.java.com": 4
-			}
-		}
-	]
+   "number_of_filters" : 1,
+   "number_of_filters_per_user" : 1,
+   "flattened_results" : false,
+   "number_of_requests" : 175727076,
+   "estimated_number_of_clients" : 14287,
+   "period_end" : 1532127600,
+   "number_of_hashes" : 10,
+   "node_version" : "1.0.0",
+   "flatten_threshold" : 1,
+   "first_request" : 1532041245,
+   "estimated_number_of_host_names" : 162956933,
+   "groups" : [
+      {
+         "hits_by_all_hostnames" : 1,
+         "id" : 1,
+         "hostnames" : {
+            "www.java.com" : 1
+         }
+      }
+   ],
+   "last_request" : 1532127645,
+   "number_of_bits_per_filter" : 491040000,
+   "filters" : [
+      {
+         "actual_false_positive_rate" : "0.0000079791",
+         "estimated_number_of_host_names" : 18161591,
+         "number_of_bits_set" : 151814229
+      }
+   ],
+   "state_file_version" : "1.0",
+   "period_begin" : 1532041245
 }
 ```
 
@@ -425,7 +420,7 @@ The supported configuration items, which are all required, are:
 - `subnet_activity_path`: The input file used to perform entity-prefix mappings
 - `period_length`: The maximum period length for each state file
 - `number_of_bits_per_filter`: How many bits each bloom filter should have
-- `number_of_filters`: How many bloom filters should there be per state file
+- `number_of_filters`: How many bloom filters should there be per state file. This number should be `1`, as this is how the prototype was extended
 - `number_of_hashes`: How many bits should be set per filter per looked up host name
 - `number_of_filters_per_user`: How many bloom filters to update for each host name lookup per client
 
@@ -498,50 +493,39 @@ Options:
 #### Example
 
 ```
-$ echo '{"groups":[{"id":1,"hostnames":{"www.java.com":"dfefecff1f2e77bfef84ef74920e77c23c811dd70df0b3b281521814e85c00ee"}}]}' | ./honas-search '2017-12-06T11:50:21.hs' | json_xs
+$ echo '{"groups":[{"id":1,"hostnames":{"www.java.com":"dfefecff1f2e77bfef84ef74920e77c23c811dd70df0b3b281521814e85c00ee"}}]}' | honas-search '/data/20-07-2018/2018-07-20.hs' | json_pp
 {
-   "node_version" : "1.0.0",
-   "state_file_version" : "1.0",
-   "period_begin" : 1512561018,
-   "first_request" : 1512561018,
-   "last_request" : 1512561021,
-   "period_end" : 1512561021,
-   "estimated_number_of_clients" : 47,
-   "estimated_number_of_host_names" : 2039,
-   "number_of_requests" : 1113932,
-   "number_of_filters" : 4,
-   "number_of_filters_per_user" : 2,
-   "number_of_hashes" : 10,
-   "number_of_bits_per_filter" : 134217728,
-   "flatten_threshold" : 0,
-   "filters" : [
-      {
-         "number_of_bits_set" : 14679,
-         "estimated_number_of_host_names" : 1468
-      },
-      {
-         "number_of_bits_set" : 9490,
-         "estimated_number_of_host_names" : 949
-      },
-      {
-         "estimated_number_of_host_names" : 1756,
-         "number_of_bits_set" : 17558
-      },
-      {
-         "number_of_bits_set" : 8684,
-         "estimated_number_of_host_names" : 868
-      }
-   ],
+   "number_of_filters" : 1,
+   "number_of_filters_per_user" : 1,
    "flattened_results" : false,
+   "number_of_requests" : 175727076,
+   "estimated_number_of_clients" : 14287,
+   "period_end" : 1532127600,
+   "number_of_hashes" : 10,
+   "node_version" : "1.0.0",
+   "flatten_threshold" : 1,
+   "first_request" : 1532041245,
+   "estimated_number_of_host_names" : 162956933,
    "groups" : [
       {
-         "hits_by_all_hostnames" : 4,
+         "hits_by_all_hostnames" : 1,
          "id" : 1,
          "hostnames" : {
-            "www.java.com" : 4
+            "www.java.com" : 1
          }
       }
-   ]
+   ],
+   "last_request" : 1532127645,
+   "number_of_bits_per_filter" : 491040000,
+   "filters" : [
+      {
+         "actual_false_positive_rate" : "0.0000079791",
+         "estimated_number_of_host_names" : 18161591,
+         "number_of_bits_set" : 151814229
+      }
+   ],
+   "state_file_version" : "1.0",
+   "period_begin" : 1532041245
 }
 ```
 
@@ -634,23 +618,6 @@ To build and run the unittests, run from inside the meson build directory:
 ninja test
 ```
 
-### Input module fuzzing                         {#input_fuzzing}
-
-The input modules are responsible for parsing untrusted input. To be reasonably
-sure the parsers are robust there is some basic support for fuzz testing these
-using [american fuzzy lop](http://lcamtuf.coredump.cx/afl/).
-
-To run the fuzzer for a specific input module:
-
-```
-fuzz/bin/run_input_fuzz.sh <input-module-name>
-```
-
-When adding a new input module, one has to include them in the list of input
-modules at the top of `fuzz/src/input_fuzz.c` and create an initial input
-file(s) from which the fuzzer will start in
-`fuzz/input/<input-module_name>/testcases/`.
-
 ### Static code analysis
 
 There are currently two ways of performing static code analysis.
@@ -662,7 +629,7 @@ inside the meson build directory:
 ninja scan-build
 ```
 
-The second is through an additiona target that calls 'clang-tidy' on all
+The second is through an additional target that calls 'clang-tidy' on all
 sources. Run from inside the meson build directory:
 
 ```

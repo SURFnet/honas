@@ -107,10 +107,17 @@ int main(int argc, char** argv)
 
 	// Store the state filenames.
 	dst_state_filename = malloc(strlen(argv[optind]));
-	src_state_filename = malloc(strlen(argv[optind + 1]));
-	if (!dst_state_filename || !src_state_filename)
+	if (!dst_state_filename)
 	{
-		log_msg(ERR, "Failed to allocate memory for the state filenames.");
+		log_msg(ERR, "Failed to allocate memory for the destination state filename.");
+		return 1;
+	}
+
+	src_state_filename = malloc(strlen(argv[optind + 1]));
+	if (!src_state_filename)
+	{
+		log_msg(ERR, "Failed to allocate memory for the source state filename.");
+		free(dst_state_filename);
 		return 1;
 	}
 
