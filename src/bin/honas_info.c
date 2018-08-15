@@ -98,7 +98,7 @@ static void show_general_information(honas_state_t* state, FILE* out)
 
 		// Calculate and print the fill rate of the Bloom filter and its actual false positive rate.
 		const double fillrate = bloom_fill_rate(bits_set, state->header->number_of_bits_per_filter);
-		fprintf(out, "    Fill Rate:        %.10f (False positive probability:   %.10f)\n"
+		fprintf(out, "    Fill Rate:        %.10f (False positive probability:   %.20f)\n"
 			, fillrate, bloom_actual_fpr(fillrate, state->header->number_of_hashes));
 	}
 	fprintf(out, "\n");
