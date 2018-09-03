@@ -156,6 +156,42 @@ The following notes apply to the collection and storage of DNS logs.
 - Only DNS CLASS 1 (`Internet (IN)`) gets processed
 - Only DNS Resource Records of type 1 (`A`), 2 (`NS`), 15 (`MX`) and 28 (`AAAA`) are processed
 
+### Subnet activity mapping using source IP-address
+
+Honas features a subsystem that tests the source IP-address against a collection
+of entity-prefix mappings. As we discussed above, the entity is then prepended
+and stored with the domain name or label. The entity-prefix mappings are loaded
+using a JSON file of subnet activity. The required configuration entry is called
+`subnet_activity_path` as we will discuss later. An example of such file is
+descibed below.
+
+```
+{
+        "subnet_activity" :
+        [
+                {
+                        "entity" : "SURFnet",
+                        "prefixes" :
+                        [
+                                { "192.87.0.0" : 16 },
+                                { "145.0.0.0" : 8 },
+                                { "192.42.0.0" : 16 }
+                        ]
+                },
+                {
+                        "entity" : "netSURF",
+                        "prefixes" :
+                        [
+                                { "192.42.113.0" : 24 },
+                                { "145.220.0.0" : 16 },
+                                { "2001:67c:6ec::" : 48 },
+                                { "2001:67c:6ec:201::" : 64 }
+                        ]
+                },
+        ]
+}
+```
+
 ### The Honas state file                         {#honas_state_file}
 
 The parsed host name lookups are saved to Honas state files. There are multiple
