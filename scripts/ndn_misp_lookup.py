@@ -46,6 +46,16 @@ for att in attributes:
 		eventresp = jsonevent["Event"]
 
 		# Print some information about the event.
+		print("Search result for " + results.search_value + ":")
 		print("----------------------------------")
+		print("Event ID: " + str(eventid))
 		print("Info: " + eventresp["info"])
 		print("Threat Level: " + threatlevels[int(eventresp["threat_level_id"])])
+
+		# Get tags to find TLP level.
+		tags = eventresp["Tag"]
+		for tag in tags:
+			if tag["name"].lower().find("tlp") != -1:
+				# Print tag, because it is the TLP level of this IoC.
+				tlplevel = tag["name"].split(':')[1]
+				print("TLP: " + tlplevel)

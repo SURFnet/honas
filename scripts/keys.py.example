@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# -----------------------------------------------------------------------------
+# Rename this file to 'keys.py', and add the MISP URL and authentication key.
+# This file is then used by the MISP automation scripts.
+# -----------------------------------------------------------------------------
+
+misp_url = 'https://<misp_url>/'
+misp_key = '<auth key>' # The MISP auth key can be found on the MISP web interface under the automation section
