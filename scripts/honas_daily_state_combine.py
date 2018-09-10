@@ -34,4 +34,4 @@ if len(destination_file) > 0:
 	# Iterate through all files again, and aggregate them.
 	for state_file in first_iteration:
 		srcfile = targetdir + "/" + state_file
-		call([ HONAS_COMBINE_BIN, "-v", destination_file, srcfile ])
+		call([ HONAS_COMBINE_BIN, destination_file, srcfile ])

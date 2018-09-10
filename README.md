@@ -156,7 +156,7 @@ The following notes apply to the collection and storage of DNS logs.
 - Only DNS CLASS 1 (`Internet (IN)`) gets processed
 - Only DNS Resource Records of type 1 (`A`), 2 (`NS`), 15 (`MX`) and 28 (`AAAA`) are processed
 
-### Subnet activity mapping using source IP-address
+### Subnet activity mapping using source IP-address	{#subnet_activity}
 
 Honas features a subsystem that tests the source IP-address against a collection
 of entity-prefix mappings. As we discussed above, the entity is then prepended
@@ -191,6 +191,28 @@ descibed below.
         ]
 }
 ```
+
+Manually crafting this JSON file can be time consuming. Therefore, we built a
+script that generates this file from a CSV file containing prefixes and entities.
+This script is located in the `scripts` directory and is called `subnet_definitions_generator.py`.
+The script can be used as follows.
+
+```
+usage: subnet_definitions_generator.py [-h] -r INPUT_FILE [-w OUTPUT_FILE]
+                                       [-v]
+
+Honas subnet definitions file generator
+
+optional arguments:
+  -h, --help      show this help message and exit
+  -r INPUT_FILE   Input file containing entity-prefix mappings
+  -w OUTPUT_FILE  Output file receiving the JSON mappings
+  -v              Verbose output
+```
+
+The INPUT_FILE is the entity-prefix mapping file in CSV format. The OUTPUT_FILE receives
+the JSON output that can be loaded into `honas-gather`. If no output file is specified,
+the JSON is written to stdout.
 
 ### The Honas state file                         {#honas_state_file}
 
@@ -419,6 +441,36 @@ search job by `honas-search`.
    "period_begin" : 1532041245
 }
 ```
+
+#### Scripts for testing DNS blacklists
+
+Manually crafting a JSON file as discussed above takes time. Therefore, we
+introduced a script for testing a generic domain name blacklist against a 
+Honas state file. The script is located in the `scripts` directory and is 
+called `query_generic_blacklist.py`. Usage information is as follows.
+
+```
+usage: query_generic_blacklist.py [-h] -b BLACKLIST_FILE -s STATE_FILE -e
+                                  ENTITY_FILE [-v]
+
+Query tool for generic domain blacklists
+
+optional arguments:
+  -h, --help         show this help message and exit
+  -b BLACKLIST_FILE  Input blacklist file containing domain names
+  -s STATE_FILE      Honas state file to query
+  -e ENTITY_FILE     Input file containing all stored entities
+  -v                 Verbose output
+
+```
+
+In which the domain name blacklist is BLACKLIST_FILE, the state file to test
+against is STATE_FILE, and ENTITY_FILE is a list of all possible entities that
+could be stored in the Bloom filters. This information is used to generate all
+queries of the form `<possible_entity>@<blacklisted_domain_name>`. The number
+of queries that the script generates and tests is the Cartesian product of the 
+input blacklist and the entity file. The script will output the JSON file with
+results from the Honas searching application.
 
 ### The `honas-gather` process                   {#honas_gather}
 
@@ -734,3 +786,29 @@ main memory access is the culprit. The easiest way to verify is to run
 
 Should the cpu usage be due to cache misses, then see above.
 
+Real-world Use Cases				{#real_world_usecases}
+-----------------------------------------
+
+### National Detection Network			{#ndnusage}
+
+The National Detection Network is a community run by the NCSC in the Netherlands.
+Security intelligence is shared in this community, in the form of Indicators of 
+Compromise (IoC). These IoCs often contains domain names, and hence can be tested
+against the Bloom filters. The IoCs are shared in a MISP (Malware Information 
+Sharing Platform), which enables automated blacklist downloading and IoC lookup.
+However, this requires some scripting for Honas as well. Therefore, we built a 
+set of scripts to help with these tasks.
+
+The script `ndn_download_blacklist.py` downloads a domain name blacklist containing 
+all domain name attributes in IoCs. This blacklist can then be tested against the 
+Bloom filters using the `query_generic_blacklist.py` script we discussed above. The
+script `ndn_misp_lookup.py` takes a domain name that was found in a Bloom filter, and 
+looks up the associated IoC(s) in the MISP. It provides the threat level and TLP tags 
+in the output, to allow security officials to decide more accurately on a follow-up.
+
+Automation access to the MISP requires an authentication key. The MISP URL and required
+authentication key are supposed to be present in a Python file called `keys.py`. An example
+keys file can be found in `keys.py.example`.
+
+The `scripts` directory contains a series of undocumented scripts. These scripts were part
+of the validation process, and are not necessarily required in practice.
