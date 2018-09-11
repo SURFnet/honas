@@ -556,6 +556,22 @@ of the network. An example advice is given below.
 -------------------------------------- End -------------------------------------
 ```
 
+#### Honas state rotation and merging
+
+The Bloom filters are stored in state files by Honas in the `bloomfilter_path` at
+the end of every `period_length`. A set of scripts is shipped with Honas to rotate
+and merge these state files, located in the `scripts` directory. The `honas_state_rotate.py`
+script looks for state files in the `bloomfilter_path` to rotate, and moves them
+to a more structured directory. Furthermore, the `honas_daily_state_combine.py` script
+then aggregates (merges) the Bloom filters in the state files. For example, states
+that contain DNS queries for one hour can be combined into a state that contains
+all queries for that day. It is possible to automate this process using cron. An
+example configuration is depicted below.
+
+```
+0 4 * * * ~/honas/scripts/honas_state_rotate.py -v
+```
+
 ### The `honas-search` process                   {#honas_search}
 
 The `honas-search` program is responsible for generating a search result based
