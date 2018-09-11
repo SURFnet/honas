@@ -8,9 +8,9 @@ import sys
 import os
 from datetime import datetime
 from shutil import copyfile
-from subprocess import call
 
 HONAS_COMBINE_BIN = "/home/gijs/honas/build/honas-combine"
+HONAS_INFO_BIN = "/home/gijs/honas/build/honas-info"
 
 # Get daily directory as first argument.
 targetdir = ""
@@ -34,4 +34,14 @@ if len(destination_file) > 0:
 	# Iterate through all files again, and aggregate them.
 	for state_file in first_iteration:
 		srcfile = targetdir + "/" + state_file
-		call([ HONAS_COMBINE_BIN, destination_file, srcfile ])
+		combine_info = os.popen(HONAS_COMBINE_BIN + " -v " + destination_file + " " + srcfile).read()
+		for line in combine_info.split('\n'):
+			print(line)
+
+# Check the fill rate of the final combined state, to catch cases where (s/m)^k > 1/2.
+state_info = os.popen(HONAS_INFO_BIN + " " + destination_file).read()
+for line in state_info.split('\n'):
+	fillrate_index = line.find("Fill Rate:")
+	if line and fillrate_index >= 0:
+		print(line)
+		break

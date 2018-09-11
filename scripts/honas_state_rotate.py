@@ -1,19 +1,20 @@
 #!/usr/bin/python3
 # ------------------------------------------------
-# Honas state rotation and merging script.
-# Run regularly to automatically archive Honas
-# state information.
+# Honas state rotation script. Run regularly to
+# automatically archive Honas state information.
 # ------------------------------------------------
 
 import datetime
 import glob
 import os
 import argparse
+import shutil
 
 HONAS_STATE_DIR = "/var/spool/honas"
 HONAS_CONFIG_FILE = "/etc/honas/gather.conf"
 HONAS_DATA_ARCHIVE_DIR = "/data"
 HONAS_COMBINE_BIN = "/home/gijs/honas/build/honas-combine"
+HONAS_INFO_BIN = "/home/gijs/honas/build/honas-info"
 
 # Parse input arguments.
 parser = argparse.ArgumentParser(description='Honas state archiving, rotation and merging tool')
@@ -64,18 +65,24 @@ for k, v in completed_states.items():
 
 		# Create new folder for archive in data directory.
 		new_state_archive = HONAS_DATA_ARCHIVE_DIR + "/" + k
-		os.mkdir(new_state_archive)
+		try:
+			os.mkdir(new_state_archive)
+			if results.verbose:
+				print("Created archive directory " + new_state_archive)
+		except OSError:
+			print("Failed to create archive directory: directory exists!")
+			continue
 
 		# Move all state files that apply to this directory.
 		moved = 0
-		for s, t in state_files:
+		dest_state = ""
+		for s, t in state_files.items():
 			if k == t:
 				basefile = os.path.basename(s)
-				os.rename(s, new_state_archive + "/" + basefile)
+				shutil.move(s, new_state_archive + "/" + basefile)
+				if not dest_state:
+					dest_state = basefile
 				moved += 1
 
-		if results.verbose:
-			print("Moved " + str(moved) + " state files to " + new_state_archive)
-
-		# Invoke the state combination script
-		#call([ HONAS_COMBINE_BIN, destination_file, srcfile ])
+				if results.verbose:
+					print("Moved state file " + s + " to archive directory " + new_state_archive)
