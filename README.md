@@ -570,7 +570,11 @@ example configuration is depicted below.
 
 ```
 0 4 * * * ~/honas/scripts/honas_state_rotate.py -v
+0 5 * * * ~/honas/scripts/honas_daily_state_combine.py
 ```
+
+Note: Honas state timestamps are handled in UTC. Take a possible time difference into
+account when installing the rotation scripts using cron.
 
 ### The `honas-search` process                   {#honas_search}
 

@@ -13,6 +13,7 @@ import shutil
 HONAS_STATE_DIR = "/var/spool/honas"
 HONAS_CONFIG_FILE = "/etc/honas/gather.conf"
 HONAS_DATA_ARCHIVE_DIR = "/data"
+HONAS_ROTATION_FILE = HONAS_DATA_ARCHIVE_DIR + "/.honas_state_rotation"
 HONAS_COMBINE_BIN = "/home/gijs/honas/build/honas-combine"
 HONAS_INFO_BIN = "/home/gijs/honas/build/honas-info"
 
@@ -56,6 +57,8 @@ for filename in glob.iglob(HONAS_STATE_DIR + "/*.hs"):
 	# Store the state file name with the mapping for reference.
 	state_files[filename] = state_date_simplified
 
+states_for_rotation_file = []
+
 # Loop over all states and check which are completed.
 for k, v in completed_states.items():
 	if v >= required_state_files:
@@ -86,3 +89,16 @@ for k, v in completed_states.items():
 
 				if results.verbose:
 					print("Moved state file " + s + " to archive directory " + new_state_archive)
+
+		# Set this completed state to be written to the rotation file.
+		states_for_rotation_file.append(k)
+
+# Check if we actually rotated some states.
+if len(states_for_rotation_file) > 0:
+	if results.verbose:
+		print("Writing out " + str(len(states_for_rotation_file)) + " rotation entries to " + HONAS_ROTATION_FILE)
+
+	# Write out rotation file for the Honas state merging script. We write all completed state dates to it.
+	with open(HONAS_ROTATION_FILE, 'w') as rotation_file:
+		for rot in states_for_rotation_file:
+			rotation_file.write(rot + '\n')
