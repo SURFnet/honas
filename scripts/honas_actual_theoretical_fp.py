@@ -12,7 +12,6 @@ import glob
 import ntpath
 from datetime import datetime
 import re
-import csv
 
 HONAS_INFO_BIN = "/home/gijs/honas/build/honas-info"
 

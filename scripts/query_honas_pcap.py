@@ -7,7 +7,6 @@
 # ---------------------------------------------
 
 import sys
-import csv
 import dpkt
 import json
 from hashlib import sha256

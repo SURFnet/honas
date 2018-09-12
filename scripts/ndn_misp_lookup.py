@@ -35,6 +35,7 @@ attributes = jsonresult["response"]["Attribute"]
 threatlevels = { 1 : "High", 2 : "Medium", 3 : "Low", 4 : "Undefined" }
 
 # Loop through attributes.
+jsonoutput = {}
 for att in attributes:
 	# Only use 'domain' attributes.
 	if att["type"] == "domain":
@@ -46,11 +47,10 @@ for att in attributes:
 		eventresp = jsonevent["Event"]
 
 		# Print some information about the event.
-		print("Search result for " + results.search_value + ":")
-		print("----------------------------------")
-		print("Event ID: " + str(eventid))
-		print("Info: " + eventresp["info"])
-		print("Threat Level: " + threatlevels[int(eventresp["threat_level_id"])])
+		jsonoutput['search_value'] = results.search_value
+		jsonoutput['event_id'] = eventid
+		jsonoutput['info'] = eventresp["info"]
+		jsonoutput['threat_level'] = threatlevels[int(eventresp["threat_level_id"])]
 
 		# Get tags to find TLP level.
 		tags = eventresp["Tag"]
@@ -58,4 +58,7 @@ for att in attributes:
 			if tag["name"].lower().find("tlp") != -1:
 				# Print tag, because it is the TLP level of this IoC.
 				tlplevel = tag["name"].split(':')[1]
-				print("TLP: " + tlplevel)
+				jsonoutput['tlp'] = tlplevel
+
+# Print out JSON output.
+print(json.dumps(jsonoutput, indent=4, ensure_ascii=False))

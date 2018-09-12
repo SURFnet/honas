@@ -4,9 +4,7 @@
 # tool for Bloom filter results.
 # --------------------------------------------
 
-import sys
 import json
-import glob
 import argparse
 import csv
 import ipaddress

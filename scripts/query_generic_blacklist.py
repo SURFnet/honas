@@ -4,7 +4,6 @@
 # generic domain name blacklist.
 # ---------------------------------------------
 
-import sys
 import csv
 import json
 from hashlib import sha256
