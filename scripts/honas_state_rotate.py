@@ -9,6 +9,8 @@ import glob
 import os
 import argparse
 import shutil
+import logging
+import logging.handlers
 
 HONAS_STATE_DIR = "/var/spool/honas"
 HONAS_CONFIG_FILE = "/etc/honas/gather.conf"
@@ -22,8 +24,16 @@ parser = argparse.ArgumentParser(description='Honas state archiving, rotation an
 parser.add_argument('-v', action='store_true', dest='verbose', help='Verbose output')
 results = parser.parse_args()
 
+# Initialize Syslog.
+log = logging.getLogger('honas_state_rotate')
+log.setLevel(logging.DEBUG)
+handler = logging.handlers.SysLogHandler(address = '/dev/log')
+formatter = logging.Formatter('%(module)s: %(message)s')
+handler.setFormatter(formatter)
+log.addHandler(handler)
+
 if results.verbose:
-	print("Performing state rotation...")
+	log.debug("Performing state rotation...")
 
 # Calculate the number of state files required for a full day.
 state_interval = 0
@@ -38,12 +48,12 @@ completed_states = {}
 state_files = {}
 
 if results.verbose:
-	print("State interval is " + str(state_interval) + ", " + str(required_state_files) + " states required for daily rotation")
+	log.debug("State interval is " + str(state_interval) + ", " + str(required_state_files) + " states required for daily rotation")
 
 # Get all available state files.
 for filename in glob.iglob(HONAS_STATE_DIR + "/*.hs"):
 	if results.verbose:
-		print("Found state file: " + filename)
+		log.debug("Found state file: " + filename)
 
 	state_date = datetime.datetime.strptime(os.path.basename(filename).replace(".hs", ""), "%Y-%m-%dT%H:%M:%S")
 	state_date_simplified = datetime.datetime.strftime(state_date, "%d-%m-%Y")
@@ -64,16 +74,16 @@ for k, v in completed_states.items():
 	if v >= required_state_files:
 		# This state is completed, we can archive and merge.
 		if results.verbose:
-			print("Daily state for " + k + " is completed!")
+			log.debug("Daily state for " + k + " is completed!")
 
 		# Create new folder for archive in data directory.
 		new_state_archive = HONAS_DATA_ARCHIVE_DIR + "/" + k
 		try:
 			os.mkdir(new_state_archive)
 			if results.verbose:
-				print("Created archive directory " + new_state_archive)
+				log.debug("Created archive directory " + new_state_archive)
 		except OSError:
-			print("Failed to create archive directory: directory exists!")
+			log.debug("Failed to create archive directory: directory exists!")
 			continue
 
 		# Move all state files that apply to this directory.
@@ -88,7 +98,7 @@ for k, v in completed_states.items():
 				moved += 1
 
 				if results.verbose:
-					print("Moved state file " + s + " to archive directory " + new_state_archive)
+					log.debug("Moved state file " + s + " to archive directory " + new_state_archive)
 
 		# Set this completed state to be written to the rotation file.
 		states_for_rotation_file.append(k)
@@ -96,7 +106,7 @@ for k, v in completed_states.items():
 # Check if we actually rotated some states.
 if len(states_for_rotation_file) > 0:
 	if results.verbose:
-		print("Writing out " + str(len(states_for_rotation_file)) + " rotation entries to " + HONAS_ROTATION_FILE)
+		log.debug("Writing out " + str(len(states_for_rotation_file)) + " rotation entries to " + HONAS_ROTATION_FILE)
 
 	# Write out rotation file for the Honas state merging script. We write all completed state dates to it.
 	with open(HONAS_ROTATION_FILE, 'w') as rotation_file:
