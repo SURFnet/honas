@@ -18,7 +18,7 @@ HONAS_BIN_PATH = "/home/gijs/honas/build/honas-search"
 parser = argparse.ArgumentParser(description='Query tool for generic domain blacklists')
 parser.add_argument('-b', action='store', dest='blacklist_file', help='Input blacklist file containing domain names', required=True)
 parser.add_argument('-s', action='store', dest='state_file', help='Honas state file to query', required=True)
-parser.add_argument('-e', action='store', dest='entity_file', help='Input file containing all stored entities', required=True)
+parser.add_argument('-e', action='store', dest='entity_file', help='Input file containing all stored entities (Must be updated when entities change!)', required=True)
 parser.add_argument('-v', action='store_true', dest='verbose', help='Verbose output')
 results = parser.parse_args()
 

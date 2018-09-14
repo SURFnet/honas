@@ -212,7 +212,9 @@ optional arguments:
 
 The INPUT_FILE is the entity-prefix mapping file in CSV format. The OUTPUT_FILE receives
 the JSON output that can be loaded into `honas-gather`. If no output file is specified,
-the JSON is written to stdout.
+the JSON is written to stdout. Note that the entity-prefix mappings may change over time.
+The JSON configuration file then must be updated, and the `honas-gather` process must be
+restarted.
 
 ### The Honas state file                         {#honas_state_file}
 
@@ -442,7 +444,7 @@ search job by `honas-search`.
 }
 ```
 
-#### Scripts for testing DNS blacklists
+#### Scripts for testing DNS blacklists		{#search_automation}
 
 Manually crafting a JSON file as discussed above takes time. Therefore, we
 introduced a script for testing a generic domain name blacklist against a 
@@ -467,10 +469,53 @@ optional arguments:
 In which the domain name blacklist is BLACKLIST_FILE, the state file to test
 against is STATE_FILE, and ENTITY_FILE is a list of all possible entities that
 could be stored in the Bloom filters. This information is used to generate all
-queries of the form `<possible_entity>@<blacklisted_domain_name>`. The number
-of queries that the script generates and tests is the Cartesian product of the 
-input blacklist and the entity file. The script will output the JSON file with
-results from the Honas searching application.
+queries of the form `<possible_entity>@<blacklisted_domain_name>`. Note that 
+the entity file must be updated when organizations are added or removed. The 
+number of queries that the script generates and tests is the Cartesian product 
+of the input blacklist and the entity file. The script will output the JSON file 
+with results from the Honas searching application. An example is written below.
+
+```
+~/honas/scripts/query_generic_blacklist.py -b example_blacklist.txt -s /data/mm-dd-yyyy/yyyy-mm-dd.hs -e possible_entities.csv
+```
+
+The example query script above resulted in the JSON file `yyyy-mm-dd.hs.json`.
+This JSON file contains all domain names that were positively tested against the 
+Bloom filter in the specified state file. Suppose we want to get an overview of
+which unique entities are responsible for the DNS queries that were performed.
+To do so, we use the `jq` command first, to remove all irrevalant JSON content.
+We mangle the output next (with example way to do so), to get output in CSV,
+containing all unique organizations including how many unique DNS queries came
+from their network.
+
+```
+jq .groups[0].hostnames 2018-09-13.hs.json | grep @ | sed 's/  \"//' | sed 's/}//g' | sed 's/{//g' | sed 's/@.*//' | sed 's/\": 1//' | sed 's/,//' | grep -Ev "^$" | sort | uniq -c | sed 's/  //g' | sed -r 's/\s+/,/'
+```
+
+We now need to aggregate the information we retrieved using the entity types.
+We assume that the entity types are available in a CSV file, used as input for
+the `entities_to_sector.py` script. An example command is described below.
+
+```
+~/honas/scripts/entities_to_sector.py -r <output_from_jq_command> -m <csv_file_with_entity_types> -w results_sectorized.csv
+```
+
+The script above results in a CSV output file containing the cumulative number
+of occurrences in the Bloom filter, aggregated per entity type. An example is
+given below.
+
+```
+sector,count
+Type_A,9
+Type_B,46
+Type_C,31
+Type_D,1
+Type_E,15
+.....
+```
+
+More examples are given in the real-world use cases, where actual real-world
+problems are discussed in a large network operator.
 
 ### The `honas-gather` process                   {#honas_gather}
 
@@ -496,7 +541,7 @@ Usage: honas-gather [--help] [--config <file>]
 #### Configuration
 
 The Honas gather process needs a number of configuration options to be
-specified before it can starts processing host name lookups and write honas
+specified before it can start processing host name lookups and write honas
 state files.
 
 The default location of the configuration file, for when none is supplied on
@@ -506,11 +551,14 @@ The supported configuration items, which are all required, are:
 
 - `bloomfilter_path`: The directory where honas state files will be written
 - `subnet_activity_path`: The input file used to perform entity-prefix mappings
-- `period_length`: The maximum period length for each state file
+- `period_length`: The maximum period length for each state file in seconds
 - `number_of_bits_per_filter`: How many bits each bloom filter should have
 - `number_of_filters`: How many bloom filters should there be per state file. This number should be `1`, as this is how the prototype was extended
 - `number_of_hashes`: How many bits should be set per filter per looked up host name
 - `number_of_filters_per_user`: How many bloom filters to update for each host name lookup per client
+
+Note: the configuration file is reloaded every `period_length` seconds. Therefore, the Honas gather
+process does not have to be restarted to change the Bloom filter parameters.
 
 #### Example configuration
 
@@ -574,7 +622,8 @@ example configuration is depicted below.
 ```
 
 Note: Honas state timestamps are handled in UTC. Take a possible time difference into
-account when installing the rotation scripts using cron.
+account when installing the rotation scripts using cron. Furthermore, the scripts are
+fairly verbose in their output. This output is written to Syslog by default.
 
 ### The `honas-search` process                   {#honas_search}
 
@@ -811,13 +860,13 @@ Real-world Use Cases				{#real_world_usecases}
 
 ### National Detection Network			{#ndnusage}
 
-The National Detection Network is a community run by the NCSC in the Netherlands.
-Security intelligence is shared in this community, in the form of Indicators of 
-Compromise (IoC). These IoCs often contains domain names, and hence can be tested
-against the Bloom filters. The IoCs are shared in a MISP (Malware Information 
-Sharing Platform), which enables automated blacklist downloading and IoC lookup.
-However, this requires some scripting for Honas as well. Therefore, we built a 
-set of scripts to help with these tasks.
+The National Detection Network is a community run by the NCSC (National Cyber 
+Security Centre) in the Netherlands. Security intelligence is shared in this 
+community, in the form of Indicators of Compromise (IoC). These IoCs often 
+contain domain names, and hence can be tested against the Bloom filters. The
+IoCs are shared in a MISP (Malware Information Sharing Platform), which enables
+automated blacklist downloading and IoC lookup. However, this requires some 
+scripting for Honas as well. Therefore, we built a set of scripts to help with these tasks.
 
 The script `ndn_download_blacklist.py` downloads a domain name blacklist containing 
 all domain name attributes in IoCs. This blacklist can then be tested against the 
@@ -828,7 +877,53 @@ in the output, to allow security officials to decide more accurately on a follow
 
 Automation access to the MISP requires an authentication key. The MISP URL and required
 authentication key are supposed to be present in a Python file called `keys.py`. An example
-keys file can be found in `keys.py.example`.
+keys file can be found in `keys.py.example`. Furthermore, the `scripts` directory contains
+a series of undocumented scripts. These scripts were part of the development and validation 
+process, and are not necessarily required in practice. They solely serve reproducibility of
+the research results.
 
-The `scripts` directory contains a series of undocumented scripts. These scripts were part
-of the validation process, and are not necessarily required in practice.
+We consider an example. Suppose that we want to obtain an overview of all unique domain names
+that were found to be hit in the Bloom filters. These domain names can then be looked up in
+the MISP using the lookup script we discussed above. The exampe command below obtains the
+overview we want.
+
+```
+jq .groups[0].hostnames yyyy-mm-dd.hs.json | grep @ | sed 's/.*@//g' | sed 's/,//g' | sed 's/\": 1//g' | sort | uniq
+```
+
+Suppose that we now want to look up all domain names in the MISP, to determine which hits
+are possibly serious, and require targeted investigation, or some other follow-up. We use
+the following script (for example).
+
+```
+for dn in `grep @ yyyy-mm-dd.hs.json | sed 's/ //g' | sed 's/\"//g' | sed 's/:1//g' | sed 's/.*@//g' | sed 's/,//g' | sort | uniq`; do ./ndn_misp_lookup.py -s $dn; done
+```
+
+If the lookup was succesful, the output should look like the following. In this example,
+we looked up the domain name `malicious.site.example.com`.
+
+```
+{
+    "search_value": "malicious.site.example.com",
+    "event_id": "1337",
+    "info": "example IoC description",
+    "threat_level": "Low",
+    "tlp": "white"
+}
+```
+
+Based on the IoC information, threat level or TLP (Traffic Light Protocol, https://first.org/tlp/),
+we could distinguish which threats are serious enough for a follow-up. The MISP features more
+information that is not yet included in the script output. However, this information can easily
+be added.
+
+### Booters					{#bootersusage}
+
+Booters are websites where one can buy a DDoS attack. They are also called `web-stressers`.
+
+TODO...
+
+Future Work					{#future_work}
+-----------------------------------------
+
+TODO...

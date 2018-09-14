@@ -68,7 +68,8 @@ with open(HONAS_ROTATION_FILE, 'r') as rotation_file:
 			# Iterate through all files again, and aggregate them.
 			for state_file in first_iteration:
 				srcfile = merge_path + "/" + state_file
-				os.popen(HONAS_COMBINE_BIN + " -v " + destination_file + " " + srcfile)
+				combine_result = os.popen(HONAS_COMBINE_BIN + " -vv " + destination_file + " " + srcfile).read()
+				log.debug(combine_result)
 
 		log.debug("Combined states in " + merge_path + " into " + destination_file)
 
