@@ -618,7 +618,7 @@ example configuration is depicted below.
 
 ```
 0 4 * * * ~/honas/scripts/honas_state_rotate.py -v
-0 6 * * * ~/honas/scripts/honas_daily_state_combine.py
+0 6 * * * cd /data && ~/honas/scripts/honas_daily_state_combine.py
 ```
 
 Note: Honas state timestamps are handled in UTC. Take a possible time difference into

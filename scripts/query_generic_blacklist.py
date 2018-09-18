@@ -22,6 +22,11 @@ parser.add_argument('-e', action='store', dest='entity_file', help='Input file c
 parser.add_argument('-v', action='store_true', dest='verbose', help='Verbose output')
 results = parser.parse_args()
 
+# Check if the state file exists.
+if not os.path.isfile(results.state_file):
+	print("The state file " + results.state_file + " does not exist!")
+	exit(1)
+
 print("Processing domain names from input blacklist file.")
 
 # Prepare Honas search query.
