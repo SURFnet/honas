@@ -213,8 +213,16 @@ optional arguments:
 The INPUT_FILE is the entity-prefix mapping file in CSV format. The OUTPUT_FILE receives
 the JSON output that can be loaded into `honas-gather`. If no output file is specified,
 the JSON is written to stdout. Note that the entity-prefix mappings may change over time.
-The JSON configuration file then must be updated, and the `honas-gather` process must be
-restarted.
+When the entity-prefix mappings change, the configuration file must be regenerated. We
+developed a script that checks for differences between CRM files over time, and regenerates
+the JSON configuration file if required. This configuration file is then automatically
+reloaded by `honas-gather` once the `period_length` interval passes. The script is called
+`crm_diff.py`, and is located in the `scripts` directory. This script can be executed
+automatically on a daily basis, using cron. An example configuration is shown below.
+
+```
+0 7 * * * /home/gijs/honas/scripts/crm_diff.py -d ~crm-sync/ -v
+```
 
 ### The Honas state file                         {#honas_state_file}
 
@@ -617,13 +625,19 @@ all queries for that day. It is possible to automate this process using cron. An
 example configuration is depicted below.
 
 ```
+# Honas state rotation and merging scripts. Note the 'cd /data' command in
+# front of the 'honas_daily_state_combine' call. This command is required
+# because the combine script needs to be executed with the data archive
+# directory as working directory.
 0 4 * * * ~/honas/scripts/honas_state_rotate.py -v
 0 6 * * * cd /data && ~/honas/scripts/honas_daily_state_combine.py
 ```
 
 Note: Honas state timestamps are handled in UTC. Take a possible time difference into
 account when installing the rotation scripts using cron. Furthermore, the scripts are
-fairly verbose in their output. This output is written to Syslog by default.
+fairly verbose in their output. This output is written to Syslog by default. Finally,
+the daily state combination script requires the working directory to be the data
+archive directory, because the `honas-combine` does so.
 
 ### The `honas-search` process                   {#honas_search}
 

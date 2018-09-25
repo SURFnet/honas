@@ -121,7 +121,7 @@ static enum subnet_activity_error add_prefix_hh(struct prefix_match** ht, struct
 	// Add the prefix with the entity to the hash table.
 	if (entry == NULL)
 	{
-		entry = (struct prefix_match*)calloc(1, sizeof(struct prefix_match));
+		entry = (struct prefix_match*)malloc(sizeof(struct prefix_match));
 		if (!entry)
 		{
 			return SA_ALLOC_FAILED;

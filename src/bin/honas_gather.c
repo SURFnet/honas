@@ -1291,6 +1291,13 @@ static void init_dry_run_dumps(struct event_base* base)
 	hllInit(&ctx.dry_run_data.daily_global);
 }
 
+// Helper function that takes the time difference in milliseconds from two timeval structs.
+// Taken from StackOverflow.
+static const float timedifference_msec(struct timeval* t0, struct timeval* t1)
+{
+    return (t1->tv_sec - t0->tv_sec) * 1000.0f + (t1->tv_usec - t0->tv_usec) / 1000.0f;
+}
+
 // The signal reload/recheck handler.
 static void recheck_handler(evutil_socket_t fd, short what, void *arg)
 {
@@ -1307,6 +1314,39 @@ static void recheck_handler(evutil_socket_t fd, short what, void *arg)
 
 		// Reset the false positive rate threshold warning.
 		ctx.fpr_warning_passed = false;
+
+		// Also reinitialize the subnet activity configuration, as this configuration
+		// may change. Automatic reloading is the most convinient.
+		if (ctx.aggregate_subnets)
+		{
+			// Measure the time it takes to reload the subnet activity configuration.
+			struct timeval t_stop, t_start;
+			gettimeofday(&t_start, NULL);
+
+			// Destroy the subnet activity subsystem.
+			if (subnet_activity_destroy(&ctx.subnet_metadata) == SA_OK)
+			{
+				log_msg(INFO, "Finalized subnet activity resources.");
+			}
+			else
+			{
+				log_msg(ERR, "Failed to finalize subnet activity resources in recheck handler!");
+			}
+
+			// Reinitialize the subnet aggregation subsystem.
+			if (subnet_activity_initialize(config.subnet_activity_path, &ctx.subnet_metadata) == SA_OK)
+			{
+				log_msg(INFO, "Succesfully initialized the subnet aggregation subsystem!");
+			}
+			else
+			{
+				log_msg(ERR, "Failed to initialize the subnet aggregation subsystem!");
+			}
+
+			// Log the time it took.
+			gettimeofday(&t_stop, NULL);
+			log_msg(INFO, "Subnet activity configuration reload took %f ms", timedifference_msec(&t_start, &t_stop));
+		}
 	}
 }
 
