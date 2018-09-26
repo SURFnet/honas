@@ -221,6 +221,7 @@ reloaded by `honas-gather` once the `period_length` interval passes. The script 
 automatically on a daily basis, using cron. An example configuration is shown below.
 
 ```
+# Checking for CRM changes, to keep the subnet activity configuration up to date.
 0 7 * * * /home/gijs/honas/scripts/crm_diff.py -d ~crm-sync/ -v
 ```
 

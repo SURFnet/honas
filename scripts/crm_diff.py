@@ -12,6 +12,8 @@
 
 import os
 import argparse
+import logging
+import logging.handlers
 
 HONAS_SUBNET_ACTIVITY_SCRIPT = "/home/gijs/honas/scripts/subnet_definitions_generator.py"
 HONAS_GATHER_CONF_SUBNET_ACTIVITY_PATH = "/etc/honas/subnet_activity.json"
@@ -22,6 +24,14 @@ parser.add_argument('-d', action='store', dest='crm_dir', help='Input directory 
 parser.add_argument('-v', action='store_true', dest='verbose', help='Verbose output')
 results = parser.parse_args()
 
+# Initialize Syslog.
+log = logging.getLogger('crm_diff')
+log.setLevel(logging.DEBUG)
+handler = logging.handlers.SysLogHandler(address = '/dev/log')
+formatter = logging.Formatter('%(module)s: %(message)s')
+handler.setFormatter(formatter)
+log.addHandler(handler)
+
 # Get the two latest daily files, and take their difference.
 latestfiles = os.popen("ls -tr " + results.crm_dir + " | tail -n 2").read().split('\n')
 
@@ -30,7 +40,7 @@ diff = ""
 if len(latestfiles) >= 2:
 	diff = os.popen("diff " + results.crm_dir + "/" + latestfiles[0] + " " + results.crm_dir + "/" + latestfiles[1]).read()
 else:
-	print("At least two CRM files are required!")
+	log.debug("At least two CRM files are required!")
 	exit(1)
 
 # Check if a difference was returned.
@@ -39,12 +49,12 @@ if diff:
 	subactgen = os.popen(HONAS_SUBNET_ACTIVITY_SCRIPT + " -r " + results.crm_dir + "/" + latestfiles[1] + " -w " + HONAS_GATHER_CONF_SUBNET_ACTIVITY_PATH).read()
 	if "Wrote JSON output to" in subactgen:
 		if results.verbose:
-			print("Succesfully generated subnet activity configuration file.")
-			print("The Honas gathering process will automatically reload the new configuration file.")
+			log.debug("Succesfully generated subnet activity configuration file.")
+			log.debug("The Honas gathering process will automatically reload the new configuration file.")
 	else:
-		print("Failed to generate subnet activity configuration file!")
+		log.debug("Failed to generate subnet activity configuration file!")
 		exit(1)
 else:
 	# No difference was returned.
 	if results.verbose:
-		print("No difference was found in the latest CRM files.")
+		log.debug("No difference was found in the latest CRM files.")

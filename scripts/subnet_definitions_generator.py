@@ -13,6 +13,8 @@ import csv
 import ipaddress
 import json
 
+HONAS_ETC_DIRECTORY = "/etc/honas"
+
 # Parse input arguments.
 parser = argparse.ArgumentParser(description='Honas subnet definitions file generator')
 parser.add_argument('-r', action='store', dest='input_file', help='Input file containing entity-prefix mappings', required=True)
@@ -74,6 +76,6 @@ else:
 		print("Wrote JSON output to " + outfilename)
 
 # Output all entities found on in a one-row CSV file.
-with open("entities_out.csv", "w") as out_entities_file:
+with open(HONAS_ETC_DIRECTORY + "/entities_out.csv", "w") as out_entities_file:
 	for k, v in input_entities.items():
 		out_entities_file.write(k + '\n')
