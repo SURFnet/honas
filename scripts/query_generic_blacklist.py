@@ -19,6 +19,7 @@ parser = argparse.ArgumentParser(description='Query tool for generic domain blac
 parser.add_argument('-b', action='store', dest='blacklist_file', help='Input blacklist file containing domain names', required=True)
 parser.add_argument('-s', action='store', dest='state_file', help='Honas state file to query', required=True)
 parser.add_argument('-e', action='store', dest='entity_file', help='Input file containing all stored entities (Must be updated when entities change!)', required=True)
+parser.add_argument('-o', action='store', dest='output_dir', help='Output directory receiving the search results file from the Bloom filters', required=True)
 parser.add_argument('-v', action='store_true', dest='verbose', help='Verbose output')
 results = parser.parse_args()
 
@@ -107,7 +108,13 @@ if len(jsonresult["groups"]) <= 0:
 else:
 	print("Found search results in " + results.state_file + "!")
 
-	# Write the search results to a JSON file.
-	with open(ntpath.basename(results.state_file) + ".json", 'w') as outresultfile:
+# Write the search results to a JSON file.
+ofilepath = results.output_dir + "/" + ntpath.basename(results.state_file) + ".json"
+try:
+	with open(ofilepath, 'w') as outresultfile:
 		outresultfile.write(json.dumps(jsonresult, indent=4))
+except IOError:
+	print("Failed to write search results to output file at: " + ofilepath)
 
+# Delete temporary JSON query file.
+os.remove(tmpfilename)
