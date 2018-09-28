@@ -526,7 +526,49 @@ Type_E,15
 More examples are given in the real-world use cases, where actual real-world
 problems are discussed in a large network operator.
 
-### The `honas-gather` process                   {#honas_gather}
+#### Automatically testing blacklists periodically	{#automatic_querying}
+
+The testing of blacklists against Bloom filters is a simple process which can
+be automated. To do so, we developed a script called `query_all_scenarios.py`.
+This script is located in the `scripts` directory, and can be used to automatically
+check a set of blacklists against all Honas state files that have not been checked
+yet. An example cron configuration is given below.
+
+```
+# Daily query scripts for all scenarios currently in place.
+0 7 * * * ~/honas/scripts/query_all_scenarios.py
+```
+
+This script requires a configuration file containing necessary information about
+the scenarios it should perform queries for. This configuration file looks as follows,
+and should be placed in the Honas `etc` directory (by default /etc/honas/). The script
+must be named `periodic_search_jobs.conf`.
+
+```
+{
+	"entities_file" : "/etc/honas/entities_out.csv",
+	"searchjobs" : 
+	[
+		{
+			"name" : "Booters",
+			"blacklist" : "/var/experiments/booters/booterblacklist.csv",
+			"result_directory" : "/var/experiments/booters/searchresults"
+		},
+		{
+			"name" : "National Detection Network",
+			"blacklist" : "/var/experiments/ndn/misp_blacklist-2018-09-27.txt",
+			"result_directory" : "/var/experiments/ndn/searchresults"
+		}
+	]
+}
+```
+
+For each search job, a friendly name should be specified. Furthermore, the location
+of the blacklist and the location of the search result files should be specified.
+The script will query all state files for which no search result file exists in the
+target directory.
+
+### The `honas-gather` process				{#honas_gather}
 
 The `honas-gather` program is responsible for parsing all the host name
 lookup logging, collecting the information in a honas state and writing these
@@ -934,11 +976,22 @@ be added.
 
 ### Booters					{#bootersusage}
 
-Booters are websites where one can buy a DDoS attack. They are also called `web-stressers`.
-
-TODO...
+Booters are websites where one can buy a DDoS attack. They are also called `web-stressers`. Similar
+to the National Detection Network, the `query_generic_blacklist.py` script can be used to test a
+blacklist of Booter domain names against the Bloom filters. Booter occurrences could suggest
+that a DDOS attack that happened in the same timeframe is requested at a Booter website. This
+knowledge could contribute to find the attacker more quickly.
 
 Future Work					{#future_work}
 -----------------------------------------
 
-TODO...
+During the development and validation of the Honas prototype, we of course had inspiration for
+more ideas and extensions. However, we did not have enough time to get to all of these. In this
+section, we describe a series of ideas for future work.
+
+- Automatic rotation of other files, such as ground truth files, if applicable;
+- Using URL blacklists in a mail filtering service, rather than IP blacklists. This way, we can
+  find out whether users clicked on links in malicious emails.
+- A user interface (UI) that enables network operators to gain insight into threat detection
+  results, find possibly serious threats and make reports over a long period of time. The National
+  Detection Network scripting could be integrated in this UI as well.
