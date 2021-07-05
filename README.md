@@ -28,7 +28,7 @@ more information, see the [Meson website](http://mesonbuild.com/).
 Install the necessary dependencies (command below is for Debian based systems):
 
 ```
-apt-get install check libyajl-dev libevent-dev libfstrm-dev libprotobuf-dev protobuf-c-compiler clang-tidy
+apt-get install check libyajl-dev libevent-dev libfstrm-dev libprotobuf-dev protobuf-c-compiler libldns-dev clang-tidy
 ```
 
 Create the meson build directory:
